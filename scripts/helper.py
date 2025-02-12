@@ -1,13 +1,14 @@
-import os
-import re
+import os, re, json, subprocess
 from datetime import date
-import subprocess
 
-DEFAULT_PATH = "/app"
+from .log import *
+
+DEFAULT_PATH = os.getcwd()
 REMOTE_PATH = "gakumas:Gakumas_KR"
 DRIVE_PATH = DEFAULT_PATH + "/res/drive"
 TEMP_PATH = DEFAULT_PATH + "/temp"
 OUTPUT_PATH = DEFAULT_PATH + "/output"
+GIT_MASTERDB_PATH = DEFAULT_PATH + "/res/masterdb"
 
 CHARACTER_REGEX_TRANS_MAP = {
     "麻央":"마오",
@@ -52,7 +53,7 @@ def Helper_GetFilesFromDir(path:str, suffix:str = None, prefix:str = None) -> li
             if prefix != None and not file.startswith(prefix):
                 continue
             file_path = os.path.join(root_path, file)
-            relate_path = os.path.relpath(file_path, path)
+            relate_path = os.path.relpath(file_path, os.getcwd())
             finds.append((file_path, relate_path, file))
     return finds   
 
@@ -65,18 +66,20 @@ Output : [
 """
 def Helper_GetFilesFromDirByDate(target_date:str, path:str, suffix:str = None, prefix:str = None) -> list[str]:
     _ORIGINAL_ROOT = os.getcwd()
-    os.chdir(path)
-    CMDS = f"""git rev-list --since='{target_date}' --until='{date.today()}' main | \
-(head -n1 && tail -n1)                                        | \
-tr '\n' ' '                                                   | \
-sed 's/ /../'                                                 | \
-xargs git diff --name-only"""
-    result = subprocess.check_output(CMDS, shell=True, text=True).split("\n")
-    os.chdir(_ORIGINAL_ROOT)
+    CMDS = f"git rev-list --since='{target_date}' --until='{date.today()}' main"
+    commits = subprocess.check_output(CMDS, shell=True, text=True, cwd=path).split("\n")
+    result = []
+    for commit in commits:
+        if commit == "": continue
+        LOG_DEBUG(3, f"Run commands git diff for commit {commit}~ from '{path}'")
+        result += subprocess.check_output(f"git diff --name-only {commit}~", shell=True, text=True, cwd=path).split("\n")
+    LOG_DEBUG(3, f"Updated file list : {result}")
+
     finds : list[str] = []
     for relate_path in result:
         if relate_path == "" or relate_path == "revision": continue
         file_path = os.path.join(path, relate_path)
+        relate_path = os.path.relpath(file_path, os.getcwd())
         finds.append((file_path, relate_path, os.path.basename(relate_path)))
     return finds   
 
@@ -91,5 +94,23 @@ def Helper_GetFilesFromDirByCheck(check_result:list, path:str, suffix:str = None
     for diff, relate_path in check_result:
         if diff == "-": continue
         file_path = os.path.join(path, relate_path)
-        finds.append((file_path, relate_path, os.path.basename(relate_path)))
+        relate_path = os.path.relpath(file_path, os.getcwd())
+        file_name:str = os.path.basename(relate_path)
+        if prefix != None and not file_name.startswith(prefix): continue
+        if suffix != None and not file_name.endswith(suffix): continue
+        finds.append((file_path, relate_path, file_name))
     return finds   
+
+MDB = {}
+def Helper_LoadMasterDB():
+    fs : list[str] = Helper_GetFilesFromDir(GIT_MASTERDB_PATH + "/pretranslate_todo/todo", '.json')
+    for abs_path, rel_path, file in fs:
+        if "/new/" in rel_path:
+            continue
+        file_path = os.path.join(GIT_MASTERDB_PATH + "/pretranslate_todo/todo/", file)
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        for k,v in data.items():
+            if v == "":
+                continue
+            MDB[k] = v

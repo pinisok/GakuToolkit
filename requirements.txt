@@ -1,3 +1,5 @@
 rclone_python>=0.1.21
 pandas>=2.2.3
 imas_tools==0.4.8
+openpyxl>=3.1.5
+xlsxwriter

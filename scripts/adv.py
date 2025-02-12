@@ -9,12 +9,28 @@ from datetime import datetime
 import pandas as pd
 from imas_tools.story.gakuen_parser import parse_messages as _externalParser
 from imas_tools.story.story_csv import StoryCsv as _externalStoryCsv
+import openpyxl
+import xlsxwriter
 
-from helper import *
-import rclone
+from .helper import *
+from . import rclone
+from .log import *
+
+def _internalOverrideXlsxColumn(dataframe):
+    #override xlsx's column name
+    dataframe.rename(columns={
+            dataframe.columns[0] : "id",
+            dataframe.columns[1] : "name",
+            dataframe.columns[2] : "translated name",
+            dataframe.columns[3] : "text",
+            dataframe.columns[4] : "translated text",
+        }, inplace= True)
 
 def _internalReadXlsx(fp):
-    return pd.read_excel(fp, na_values="", keep_default_na=False, na_filter=False)
+    LOG_DEBUG(4, f"Open {fp.name} by openpyxl from pandas")
+    dataframe = pd.read_excel(fp, na_values="", keep_default_na=False, na_filter=False, engine="openpyxl")
+    _internalOverrideXlsxColumn(dataframe)
+    return dataframe
 
 """
 
@@ -29,12 +45,6 @@ def _encode(string : str):
     return string
 
 def _internalXlsxDataFrameProcess(dataframe:pd.DataFrame, origin_path:str):
-    # Rename column for other scripts
-    dataframe.rename(columns={
-                                "type":"id",
-                                "translated text":"trans"
-                            },
-                        inplace=True)
     #Remove comments
     if len(dataframe.columns) > 5: dataframe.drop(dataframe.columns[5:], axis=1,inplace=True)
     dataframe.loc[len(dataframe)] = {"id":"info", "name" : origin_path}
@@ -61,23 +71,22 @@ def _internalXlsxRecordsProcess(records : list[dict]):
         if not isinstance(record["text"], str):                                         
             record["text"] = ""
 
-        if not isinstance(record["trans"], str):
-            if isinstance(record["trans"], int) or isinstance(record["trans"], float):  
-                record["trans"] = str(record["trans"])
+        if not isinstance(record["translated text"], str):
+            if isinstance(record["translated text"], int) or isinstance(record["translated text"], float):  
+                record["translated text"] = str(record["translated text"])
             else:                                                                       
-                record["trans"] = ""
+                record["translated text"] = ""
                 
         record["text"] = _encode(record["text"])
-        record["trans"] = _encode(record["trans"])
-        if len(record["trans"]) < 1 and record["id"] != "译者" and record["id"] != "info":
+        record["translated text"] = _encode(record["translated text"])
+        if len(record["translated text"]) < 1 and record["id"] != "译者" and record["id"] != "info":
             raise Exception(f"Adv 파일 {records.index(record)}번째 줄 번역문 '{record['text']}'이 빈 줄 입니다. 해당 파일을 스킵합니다")
 
 def _internalCsvWriter(fp, records):
     writer = csv.DictWriter(fp, fieldnames=["id","name","text","trans"], lineterminator='\n')
     writer.writerow({"id":"id","name":"name","text":"text","trans":"trans"})
     for record in records:
-        writer.writerow({"id":record["id"],"name":record["name"],"text":record["text"],"trans":record["trans"]})
-    fp.close()
+        writer.writerow({"id":record["id"],"name":record["name"],"text":record["text"],"trans":record["translated text"]})
 
 
 """
@@ -87,7 +96,7 @@ Helper for TxtToXlsx
 
 def _internalTxtToScv(read_fp, file_name):
     txt = _externalParser(read_fp.read())
-    story_csv = _externalStoryCsv(file_name)
+    story_csv = _externalStoryCsv.new_empty_csv(file_name)
     for line in txt:
         if (line["__tag__"] == "message" or line["__tag__"] == "narration") and line.get("text"):
             story_csv.append_line(
@@ -112,12 +121,12 @@ def _internalTxtToScv(read_fp, file_name):
 
 def _internalCsvToDataFrame(read_fp):
     adv_dataframe = pd.read_csv(read_fp, index_col=False)
-    adv_dataframe.rename(columns={"type":"type","trans":"translated text"}, inplace=True)
     adv_dataframe.insert(loc=2, column='translated name', value="")
     adv_dataframe.drop(adv_dataframe.tail(2).index, inplace=True)
+    _internalOverrideXlsxColumn(adv_dataframe)
     if len(adv_dataframe.index) < 1:
         raise ValueError("No message")
-    adv_dataframe['text'].replace("\\n", "\n", inplace=True)
+    adv_dataframe['text'] = adv_dataframe['text'].replace("\\n", "\n")
     return adv_dataframe
 
 def _internalUpdateDataFrame(new_dataframe, original_fp):
@@ -147,8 +156,8 @@ def _internalUpdateDataFrame(new_dataframe, original_fp):
             new_records[idx]["translated text"] = orig_records[idx]["translated text"]
             if new_records[idx]["text"] != orig_records[idx]["text"]:
                 diff = difflib.ndiff(orig_records[idx]["text"], new_dataframe[idx]["text"])
-                print(f"Unmatch text at line {idx} : {len(list(diff)) / len(new_dataframe[idx]["text"])}")
-                print(f"'{new_records[idx]["text"]}' : '{orig_records[idx]["text"]}'")
+                LOG_WARN(4, f"Unmatch text at line {idx} : {float(len(list(diff)) / len(new_dataframe[idx]['text'])):.02f}")
+                LOG_WARN(4, f"'{new_records[idx]['text']}' : '{orig_records[idx]['text']}'")
                 new_records[idx]["comments"] = "원본 문자열이 수정되었습니다. 번역값이 적절한지 확인 후 해당 문구를 삭제해주세요"
         return pd.DataFrame.from_dict(new_records)
     return pd.DataFrame.from_dict(orig_records)
@@ -192,14 +201,14 @@ def _internalCsvToTxt(csv_strings, txt_strings):
                 new_text = _merger(
                     line["text"], next_csv_line["trans"], next_csv_line["text"]
                 )
-                gakuen_txt = gakuen_txt.replace(
+                txt_strings = txt_strings.replace(
                     f"text={line['text']}",
                     f"text={new_text}",
                     1,
                 )
         if line["__tag__"] == "message":
             if line.get("name") and line["name"] != "" and next_csv_line["name"] != "":
-                gakuen_txt = gakuen_txt.replace(
+                txt_strings = txt_strings.replace(
                     f"name={line['name']}",
                     f"name={next_csv_line['name']}",
                     1,
@@ -211,7 +220,7 @@ def _internalCsvToTxt(csv_strings, txt_strings):
                 new_text = _merger(
                     line["title"], next_csv_line["trans"], next_csv_line["text"]
                 )
-                gakuen_txt = gakuen_txt.replace(
+                txt_strings = txt_strings.replace(
                     f"title={line['title']}",
                     f"title={new_text}",
                     1,
@@ -226,7 +235,7 @@ def _internalCsvToTxt(csv_strings, txt_strings):
                         next_csv_line["text"],
                         is_choice=True,
                     )
-                    gakuen_txt = gakuen_txt.replace(
+                    txt_strings = txt_strings.replace(
                         f"text={choice['text']}",
                         f"text={new_text}",
                         1,
@@ -239,12 +248,12 @@ def _internalCsvToTxt(csv_strings, txt_strings):
                     next_csv_line["text"],
                     is_choice=True,
                 )
-                gakuen_txt = gakuen_txt.replace(
+                txt_strings = txt_strings.replace(
                     f'text={line["choices"]["text"]}',
                     f"text={new_text}",
                     1,
                 )
-    return gakuen_txt
+    return txt_strings
 
 """
 File Converter
@@ -262,31 +271,38 @@ def XlsxToCsv(read_fp, write_fp, origin_path:str):
     _internalXlsxRecordsProcess(xlsx_records)
     _internalCsvWriter(write_fp, xlsx_records)
 
-def CsvToTxt(read_fp, write_path): 
+def CsvToTxt(read_fp, write_path, original_path): 
     csv_strings = "".join(read_fp.readlines())
-    with open(write_path, "r", encoding='utf-8') as write_fp:
+    with open(original_path, "r", encoding='utf-8') as write_fp:
         txt_strings = "".join(write_fp.readlines())
     try:
         txt_strings = _internalCsvToTxt(csv_strings, txt_strings)
         with open(write_path, "w", encoding="utf-8") as write_fp:
             write_fp.write(txt_strings)
     except Exception as e:
-        print(f"Error {e} at '{os.path.basename(write_path)}'")
+        LOG_ERROR(3, f"Error {e} at '{os.path.basename(write_path)}'")
 
-def XlsxToTxt(read_fp, write_path):
+def XlsxToTxt(read_fp, write_path, original_path):
     csvIO = StringIO()
-    XlsxToCsv(read_fp, csvIO)
+    XlsxToCsv(read_fp, csvIO, os.path.basename(write_path))
     csvIO.seek(0)
-    CsvToTxt(csvIO, write_path)
+    CsvToTxt(csvIO, write_path, original_path)
 
 # 원본 > 번역 변환
-def TxtToXlsx(read_fp, write_fp, original_fp, file_name:str):
+def TxtToXlsx(read_fp, output_path, file_name:str):
     csv = _internalTxtToScv(read_fp, file_name)
     dataframe = _internalCsvToDataFrame(csv)
-    if original_fp != None:
+    
+    if(os.path.exists(output_path)):
+        original_fp = open(output_path, "rb")
+        LOG_DEBUG(4, f"Try to update original file")
         dataframe = _internalUpdateDataFrame(dataframe, original_fp)
         original_fp.close()
+
+    LOG_DEBUG(4, f"Write result to file")
+    write_fp = open(output_path, "wb")
     _internalDataFrameToXlsx(dataframe, write_fp)
+    write_fp.close()
 
 
 """
@@ -319,8 +335,8 @@ Folder Processor
 """
 
 
-ADV_ORIGINAL_GIT_PATH = DEFAULT_PATH + "/res/adv"
-ADV_ORIGINAL_PATH = ADV_ORIGINAL_GIT_PATH + "/Resource"
+GIT_ADV_PATH = DEFAULT_PATH + "/res/adv"
+ADV_ORIGINAL_PATH = GIT_ADV_PATH + "/Resource"
 ADV_REMOTE_PATH = REMOTE_PATH + "/text assets"
 ADV_DRIVE_PATH = DRIVE_PATH + "/text assets"
 ADV_TEMP_PATH = TEMP_PATH + "/adv"
@@ -328,24 +344,34 @@ ADV_OUTPUT_PATH = OUTPUT_PATH + "/local-files/resource"
 ADV_CACHE_FILE = "./cache/adv_update_date.txt"
 
 # 업데이트 반영
+# Campus-Adv-txts > Google Drive
 def UpdateOriginalToDrive(bFullUpdate=False):
     last_update_date = None
+    LOG_DEBUG(2, "Check cache file")
     if os.path.exists(ADV_CACHE_FILE):
         with open(ADV_CACHE_FILE, 'r') as f:
             try:
                 last_update_date = datetime.fromisoformat(f.readlines()[0])
+                LOG_DEBUG(2, f"Load update date {last_update_date}")
             except:
-                0
+                LOG_WARN(2, "Invalid adv cache file, skip update")
+                last_update_date = None
+    LOG_DEBUG(2, "Write datetime cache file")
     with open(ADV_CACHE_FILE, 'w') as f:
-        f.write(datetime.today().isoformat())
+        f.write(datetime.today().isoformat(" "))
     if bFullUpdate:
+        LOG_DEBUG(2, "Full update")
         original_file_paths = Helper_GetFilesFromDir(ADV_ORIGINAL_PATH, ".txt", "adv_")
     elif last_update_date != None:
-        original_file_paths = Helper_GetFilesFromDirByDate(last_update_date, ADV_ORIGINAL_GIT_PATH, ".txt", "adv_")
+        LOG_DEBUG(2, "Check git diff")
+        original_file_paths = Helper_GetFilesFromDirByDate(last_update_date, GIT_ADV_PATH, ".txt", "adv_")
     else:
-        print("ADV is not updated, skip")
-        return
+        original_file_paths = []
+    if len(original_file_paths) <= 0:
+        LOG_INFO(2, "ADV is not updated, skip")
+        return []
     
+    LOG_INFO(2, f"Updating {len(original_file_paths)} adv files")
     for abs_path, rel_path, filename in original_file_paths:
         if filename in ADV_BLACKLIST_FILE:
             continue
@@ -354,52 +380,62 @@ def UpdateOriginalToDrive(bFullUpdate=False):
             continue
         input_path = rel_path
         output_path = os.path.join(ADV_DRIVE_PATH, foldername, filename[:-4]+".xlsx")
+        LOG_DEBUG(2, f"Start convert from drive to output '{input_path}' to '{output_path}'")
         input_fp = open(input_path, "r", encoding="utf-8")
-        if(os.path.exists(output_path)):
-            original_fp = open(output_path, "r", encoding="utf-8")
-        else:
-            original_fp = None
-        output_fp = open(output_path, "w", encoding="utf-8")
         try:
-            TxtToXlsx(input_fp, output_fp, original_fp)
+            TxtToXlsx(input_fp, output_path, filename)
         except Exception as e:
-            print("Error: {e}")
+            LOG_ERROR(2, f"Error: {e}")
+            raise Exception(e)
         finally:
             if not input_fp.closed:
                 input_fp.close()
-            if not output_fp.closed:
-                output_fp.close()
-            if original_fp != None and not original_fp.closed:
-                original_fp.close()
+    
+    file_list = rclone.check(ADV_DRIVE_PATH, ADV_REMOTE_PATH)
+    LOG_WARN(2, f"There is {len(file_list)} files changed")
+    LOG_DEBUG(2, f"file_list : {file_list}")
+    for obj in file_list:
+        if obj[0] == "*":
+            LOG_WARN(2, f"Update '{obj[1]}' file to remote")
+    for obj in file_list:
+        if obj[0] == "+":
+            LOG_WARN(2, f"Add new '{obj[1]}' file to remote")
     # TODO Check result is okay
-    raise NotImplementedError("# TODO Check result is okay")
     if False:
         rclone.sync(ADV_DRIVE_PATH, ADV_REMOTE_PATH)
+    return file_list
 
 
 # 번역 수정사항 반영
+# Google Drive > GakumasTranslationDataKor
 def ConvertDriveToOutput(bFullUpdate=False):
-    check_result = rclone.check(ADV_REMOTE_PATH, ADV_DRIVE_PATH)
     if bFullUpdate:
+        LOG_DEBUG(2, "Try Full Update")
         rclone.copy(ADV_REMOTE_PATH, ADV_DRIVE_PATH)
-        drive_file_paths = Helper_GetFilesFromDir(ADV_ORIGINAL_PATH, ".txt", "adv_")
-    elif len(drive_file_paths) > 0:
-        drive_file_paths = Helper_GetFilesFromDirByCheck(check_result, ADV_ORIGINAL_GIT_PATH, ".txt", "adv_")
-        rclone.copy(ADV_REMOTE_PATH, ADV_DRIVE_PATH)
+        drive_file_paths = Helper_GetFilesFromDir(ADV_DRIVE_PATH, ".xlsx", "adv_")
     else:
-        print("ADV is not updated, skip")
-        return
+        LOG_DEBUG(2, "Check updated files")
+        check_result = rclone.check(ADV_REMOTE_PATH, ADV_DRIVE_PATH)
+        # for obj in check_result: obj[1] = os.path.basename(obj[1])[:-5]+".txt"
+        # LOG_DEBUG(2, f"Check result {check_result}")
+        drive_file_paths = Helper_GetFilesFromDirByCheck(check_result, ADV_DRIVE_PATH, ".xlsx", "adv_")
+        rclone.copy(ADV_REMOTE_PATH, ADV_DRIVE_PATH)
+    if len(drive_file_paths) <= 0:
+        LOG_INFO(2, "ADV is not updated, skip")
+        return []
+    LOG_INFO(2, f"Converting {len(drive_file_paths)} adv files")
     for abs_path, rel_path, filename in drive_file_paths:
-        input_path = rel_path
-        output_path = os.path.join(ADV_OUTPUT_PATH, filename[:-4]+".xlsx")
-        input_fp = open(input_path, "r", encoding="utf-8")
-        output_fp = open(output_path, "w", encoding="utf-8")
+        input_path = abs_path
+        output_path = os.path.join(ADV_OUTPUT_PATH, filename[:-5]+".txt")
+        original_path = os.path.join(ADV_ORIGINAL_PATH, filename[:-5]+".txt")
+        LOG_DEBUG(2, f"Start convert from drive to output '{input_path}' to '{output_path}'")
+        input_fp = open(input_path, "rb")
         try:
-            XlsxToTxt(input_fp, output_fp)
+            XlsxToTxt(input_fp, output_path, original_path)
         except Exception as e:
-            print("Error during Convert ADV drive to output: {e}")
+            LOG_ERROR(2, f"Error during Convert ADV drive to output: {e}")
+            raise Exception(e)
         finally:
-            if not input_fp.closed:
+            if input_fp != None and not input_fp.closed:
                 input_fp.close()
-            if not output_fp.closed:
-                output_fp.close()
+    return drive_file_paths

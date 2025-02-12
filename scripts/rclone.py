@@ -6,7 +6,24 @@ from typing import Callable, List, Union
 from rclone_python import rclone
 from rclone_python.remote_types import RemoteTypes
 
+from .log import *
+
 SECRET_NAME = "RCLONE_CONFIG"
+
+from rich.progress import (
+    Progress,
+    TextColumn,
+    BarColumn,
+    TaskProgressColumn,
+    TransferSpeedColumn,
+)
+
+progBar = Progress(
+    TextColumn("[progress.description]{task.description}"),
+    BarColumn(),
+    TaskProgressColumn(),
+    TransferSpeedColumn(),
+)
 
 def LoadRemoteConfig(name):
     config = configparser.ConfigParser()
@@ -55,29 +72,33 @@ class Recorder:
 
 def copy(source, destination):
     recorder = Recorder()
-    os.makedirs(destination, mode=775, exist_ok=True)
-    rclone.copy(source, destination, listener=recorder.update, args=["--drive-shared-with-me"])
+    LOG_INFO(2, f"Rclone copy from '{source}' to '{destination}'")
+    rclone.copy(source, destination, listener=recorder.update, args=["--drive-shared-with-me", "--fast-list"], pbar=progBar)
     return recorder
 
 def sync(source, destination):
     recorder = Recorder()
-    os.makedirs(destination, mode=775, exist_ok=True)
-    rclone.sync(source, destination, listener=recorder.update, args=["--drive-shared-with-me"])
+    LOG_INFO(2, f"Rclone sync from '{source}' to '{destination}'")
+    rclone.sync(source, destination, listener=recorder.update, args=["--drive-shared-with-me", "--fast-list"], pbar=progBar)
     return recorder
 
 def check(source, destination):
-    returncode, result = rclone.check(source, destination, args=["--drive-shared-with-me"])
+    LOG_INFO(2, f"Rclone check from '{source}' to '{destination}'")
+    returncode, result = rclone.check(source, destination, args=["--drive-shared-with-me", "--fast-list"])
     return_result = []
     for obj in result:
         if obj[0] != '=':
-            return_result.append(obj)
+            return_result.append([obj[0], os.path.relpath(os.path.join(destination, obj[1]), destination)])
     return return_result
 def init():
     if not rclone.is_installed():
         raise Exception("Rclone is not installed")
+    version = rclone.version()[1:].split(".")
+    if int(version[0]) < 1 or int(version[0]) == 1 and int(version[1]) < 69:
+        raise Exception("Please install newer rclone client")
     # print("Setting up rclone")
+    remote_name = os.getenv("REMOTE_NAME")
     if not hasRemote(remote_name):
-        remote_name = os.getenv("RCLONE_NAME")
         remote_config = LoadRemoteConfig(remote_name)
         createRemote(remote_name, remote_config)
     if not hasRemote(remote_name):
