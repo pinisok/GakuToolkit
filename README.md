@@ -17,3 +17,12 @@ GakuToolkit 은 외부 폴더의 엑셀 시트의 텍스트, JSON 변환을 중�
 
 ### TXT/Json > 엑셀 시트 변환 (로컬 > 드라이브 동기화)
 
+
+### Todo
+
+- [x] Adv 처리
+- [x] MasterDB 처리
+- [ ] Generic 처리
+- [ ] Localization 처리
+- [ ] .gitignore 추가(cache, res/drive, output, __pycache__, scripts/__pycache__, 등)
+- [ ] 자동 시트 수정?(업데이트 된 파일 체크 해제)
