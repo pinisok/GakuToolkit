@@ -118,7 +118,7 @@ def UpdateOriginalToDrive(bFullUpdate = False):
         original_file_paths = Helper_GetFilesFromDirByDate(last_update_date, MASTERDB_ORIGINAL_PATH, ".yaml")
     else:
         original_file_paths = []
-    if len(original_file_paths) <= 0:
+    if original_file_paths is not None and len(original_file_paths) <= 0:
         LOG_INFO(2, "MasterDB is not updated, skip")
         return []
     
@@ -204,7 +204,7 @@ def ConvertDriveToOutput(bFullUpdate=False):
         rclone.copy(MASTERDB_REMOTE_PATH, MASTERDB_DRIVE_PATH)
     if len(drive_file_paths) <= 0:
         LOG_INFO(2, "MasterDB is not updated, skip")
-        return []
+        return [],[]
     todo_list = None
     if len(drive_file_paths) > 0:
         todo_list = []
@@ -237,15 +237,19 @@ def ConvertDriveToOutput(bFullUpdate=False):
 
 
     LOG_INFO(2, f"Converting {len(drive_file_paths)} MasterDB files")
+    converted_file_list = []
+    error_file_list = []
     for abs_path, rel_path, filename in drive_file_paths:
         input_path = abs_path
         output_path = os.path.join(GIT_MASTERDB_PATH + "/pretranslate_todo/todo/new", filename[:-5]+"_translated.json")
         LOG_DEBUG(2, f"Start convert from drive to output '{input_path}' to '{output_path}'")
         try:
             XlsxToJson(input_path, output_path)
+            converted_file_list.append(filename)
         except Exception as e:
             LOG_ERROR(2, f"Error during Convert MasterDB drive to output: {e}")
             logger.exception(e)
+            error_file_list.append((filename, e))
 
     LOG_INFO(2, f"Build MasterDB files")
     os.chdir(GIT_MASTERDB_PATH)
@@ -253,4 +257,4 @@ def ConvertDriveToOutput(bFullUpdate=False):
     pretranslate_process.merge_todo()
     os.chdir(ORIGIN_CWD)
 
-    return drive_file_paths
+    return error_file_list, converted_file_list

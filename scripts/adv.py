@@ -423,8 +423,10 @@ def ConvertDriveToOutput(bFullUpdate=False):
         rclone.copy(ADV_REMOTE_PATH, ADV_DRIVE_PATH)
     if len(drive_file_paths) <= 0:
         LOG_INFO(2, "ADV is not updated, skip")
-        return []
+        return [],[]
     LOG_INFO(2, f"Converting {len(drive_file_paths)} adv files")
+    converted_file_list = []
+    error_file_list = []
     for abs_path, rel_path, filename in drive_file_paths:
         input_path = abs_path
         output_path = os.path.join(ADV_OUTPUT_PATH, filename[:-5]+".txt")
@@ -433,10 +435,12 @@ def ConvertDriveToOutput(bFullUpdate=False):
         input_fp = open(input_path, "rb")
         try:
             XlsxToTxt(input_fp, output_path, original_path)
+            converted_file_list.append([abs_path, rel_path, filename])
         except Exception as e:
             LOG_ERROR(2, f"Error during Convert ADV drive to output: {e}")
             logger.exception(e)
+            error_file_list.append((e, filename))
         finally:
             if input_fp != None and not input_fp.closed:
                 input_fp.close()
-    return drive_file_paths
+    return error_file_list, converted_file_list
