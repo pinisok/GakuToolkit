@@ -64,9 +64,9 @@ Output : [
     (Absoulute path, Relative path)
 ]
 """
-def Helper_GetFilesFromDirByDate(target_date:str, path:str, suffix:str = None, prefix:str = None) -> list[str]:
+def Helper_GetFilesFromDirByDate(target_date:str, path:str, suffix:str = None, prefix:str = None, branch:str='origin/main') -> list[str]:
     _ORIGINAL_ROOT = os.getcwd()
-    CMDS = f"git rev-list --since='{target_date}' --until='{date.today()}' main"
+    CMDS = f"git rev-list --since='{target_date}' --until='{date.today()}' {branch}"
     commits = subprocess.check_output(CMDS, shell=True, text=True, cwd=path).split("\n")
     result = []
     for commit in commits:
