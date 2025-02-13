@@ -98,6 +98,9 @@ def init():
         raise Exception("Please install newer rclone client")
     # print("Setting up rclone")
     remote_name = os.getenv("REMOTE_NAME")
+    if remote_name == None:
+        LOG_WARN(2, f"Environment 'REMOTE_NAME' is not set, use default name 'gakumas'")
+        remote_name = "gakumas"
     if not hasRemote(remote_name):
         remote_config = LoadRemoteConfig(remote_name)
         createRemote(remote_name, remote_config)

@@ -281,6 +281,7 @@ def CsvToTxt(read_fp, write_path, original_path):
             write_fp.write(txt_strings)
     except Exception as e:
         LOG_ERROR(3, f"Error {e} at '{os.path.basename(write_path)}'")
+        logger.exception(e)
 
 def XlsxToTxt(read_fp, write_path, original_path):
     csvIO = StringIO()
@@ -386,7 +387,7 @@ def UpdateOriginalToDrive(bFullUpdate=False):
             TxtToXlsx(input_fp, output_path, filename)
         except Exception as e:
             LOG_ERROR(2, f"Error: {e}")
-            raise Exception(e)
+            logger.exception(e)
         finally:
             if not input_fp.closed:
                 input_fp.close()
@@ -434,7 +435,7 @@ def ConvertDriveToOutput(bFullUpdate=False):
             XlsxToTxt(input_fp, output_path, original_path)
         except Exception as e:
             LOG_ERROR(2, f"Error during Convert ADV drive to output: {e}")
-            raise Exception(e)
+            logger.exception(e)
         finally:
             if input_fp != None and not input_fp.closed:
                 input_fp.close()

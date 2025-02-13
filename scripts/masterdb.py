@@ -106,7 +106,7 @@ def UpdateOriginalToDrive(bFullUpdate = False):
                 last_update_date = datetime.fromisoformat(f.readlines()[0])
                 LOG_DEBUG(2, f"Load update date {last_update_date}")
             except:
-                LOG_WARN(2, "Invalid adv cache file, skip update")
+                LOG_WARN(2, "Invalid masterdb cache file, skip update")
                 last_update_date = None
     LOG_DEBUG(2, "Write datetime cache file")
     with open(MASTERDB_CACHE_FILE, 'w') as f:
@@ -167,8 +167,8 @@ def UpdateOriginalToDrive(bFullUpdate = False):
             _empty_value_count = JsonToXlsx(input_path, output_path)
             LOG_DEBUG(2, f"Untranslated values : {_empty_value_count}")
         except Exception as e:
-            logger.exception(e)
             LOG_ERROR(2, f"Error {e}")
+            logger.exception(e)
         empty_value_count+=_empty_value_count
     LOG_DEBUG(2, f"Sum of untranslated values : {empty_value_count}")
 
