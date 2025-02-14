@@ -235,7 +235,7 @@ def UpdateOriginalToDrive(bFullUpdate = False):
     for obj in file_list:
         if obj[0] == "+":
             LOG_DEBUG(2, f"Add new '{obj[1]}' file to remote")
-    if False:
+    if True:
         LOG_DEBUG(2, f"Upload result to remote")
         rclone.sync(MASTERDB_DRIVE_PATH, MASTERDB_REMOTE_PATH)
     return file_list

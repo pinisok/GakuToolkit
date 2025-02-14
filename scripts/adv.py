@@ -438,7 +438,7 @@ def UpdateOriginalToDrive(bFullUpdate=False):
         if obj[0] == "+":
             LOG_DEBUG(2, f"Add new '{obj[1]}' file to remote")
     # TODO Check result is okay
-    if False:
+    if True:
         rclone.sync(ADV_DRIVE_PATH, ADV_REMOTE_PATH)
     return file_list
 
