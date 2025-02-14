@@ -5,25 +5,19 @@ from typing import Callable, List, Union
 
 from rclone_python import rclone
 from rclone_python.remote_types import RemoteTypes
-
-from .log import *
-
-SECRET_NAME = "RCLONE_CONFIG"
-
 from rich.progress import (
     Progress,
     TextColumn,
     BarColumn,
     TaskProgressColumn,
-    TransferSpeedColumn,
+    TimeRemainingColumn,
+    SpinnerColumn,
+    DownloadColumn,
 )
 
-progBar = Progress(
-    TextColumn("[progress.description]{task.description}"),
-    BarColumn(),
-    TaskProgressColumn(),
-    TransferSpeedColumn(),
-)
+from .log import *
+
+SECRET_NAME = "RCLONE_CONFIG"
 
 def LoadRemoteConfig(name):
     config = configparser.ConfigParser()
@@ -69,17 +63,30 @@ class Recorder:
             for task_update in update["tasks"]
             if task_update["name"] == task_name
         ]
+def generatePbar():
+    pbar = Progress(
+        TextColumn("[progress.description]{task.description}"),
+        SpinnerColumn(),
+        BarColumn(),
+        TaskProgressColumn(),
+        DownloadColumn(binary_units=True),
+        TimeRemainingColumn(),
+        console=Console(stderr=True),
+        redirect_stdout=False,
+        redirect_stderr=True,
+    )
+    return pbar
 
 def copy(source, destination):
     recorder = Recorder()
     LOG_INFO(2, f"Rclone copy from '{source}' to '{destination}'")
-    rclone.copy(source, destination, listener=recorder.update, args=["--drive-shared-with-me", "--fast-list"], pbar=progBar)
+    rclone.copy(source, destination, listener=recorder.update, args=["--drive-shared-with-me", "--fast-list", "--transfers=32"], pbar=generatePbar())
     return recorder
 
 def sync(source, destination):
     recorder = Recorder()
     LOG_INFO(2, f"Rclone sync from '{source}' to '{destination}'")
-    rclone.sync(source, destination, listener=recorder.update, args=["--drive-shared-with-me", "--fast-list"], pbar=progBar)
+    rclone.sync(source, destination, listener=recorder.update, args=["--drive-shared-with-me", "--fast-list", "--transfers=32"], pbar=generatePbar())
     return recorder
 
 def check(source, destination):

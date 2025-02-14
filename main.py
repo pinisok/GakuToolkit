@@ -1,12 +1,13 @@
-from datetime import datetime
 
-from scripts import adv
-from scripts import masterdb
-from scripts import generic
-from scripts import localization
+from datetime import datetime
+import argparse
+
+from scripts import rclone, adv, masterdb, generic, localization
 from scripts.log import *
 
 full_update = False
+CONVERT = True
+UPDATE = True
 
 def Convert(bFullUpdate):
     LOG_INFO(1, "Converting ADV")
@@ -14,9 +15,9 @@ def Convert(bFullUpdate):
     LOG_INFO(1, "Converting MasterDB")
     ERR_MASTERDB_FILE, MASTERDB_FILE = masterdb.ConvertDriveToOutput(bFullUpdate)
     LOG_INFO(1, "Converting Generic")
-    GENERIC_FILE:list = []
+    ERR_GENERIC_FILE, GENERIC_FILE = generic.ConvertDriveToOutput(bFullUpdate)
     LOG_INFO(1, "Converting Localization")
-    LOCALIZATION_FILE:list = []
+    ERR_LOCALIZATION_FILE, LOCALIZATION_FILE = localization.ConvertDriveToOutput(bFullUpdate)
 
     if len(ADV_FILE) + len(MASTERDB_FILE) + len(GENERIC_FILE) + len(LOCALIZATION_FILE) > 0:
         LOG_INFO(1, "Write version.txt")
@@ -24,84 +25,93 @@ def Convert(bFullUpdate):
             f.write(datetime.today().isoformat(" "))
     else:
         LOG_INFO(1, "No files updated")
-    return (ERR_ADV_FILE, ADV_FILE), (ERR_MASTERDB_FILE, MASTERDB_FILE), GENERIC_FILE, LOCALIZATION_FILE
+    return (ERR_ADV_FILE, ADV_FILE), (ERR_MASTERDB_FILE, MASTERDB_FILE), (ERR_GENERIC_FILE, GENERIC_FILE), (ERR_LOCALIZATION_FILE, LOCALIZATION_FILE)
 
 def Update(bFullUpdate):
     LOG_INFO(1, "Updating ADV")
     ADV_FILE = adv.UpdateOriginalToDrive(bFullUpdate)
-    LOG_INFO(1, "Updated ADV")
     LOG_INFO(1, "Updating MasterDB")
     MASTERDB_FILE = masterdb.UpdateOriginalToDrive(bFullUpdate)
-    LOG_INFO(1, "Updating Generic")
-    GENERIC_FILE:list = []
-    LOG_INFO(1, "Updating Localization")
-    LOCALIZATION_FILE:list = []
 
-    return ADV_FILE, MASTERDB_FILE, GENERIC_FILE, LOCALIZATION_FILE
+    return ADV_FILE, MASTERDB_FILE
     
     
 
+def _convert_summary(NAME, ARR):
+    if len(ARR[0]) + len(ARR[1]) > 0:
+        LOG_INFO(1, NAME)
+        if len(ARR[0]) > 0:
+            ARR[0].sort(key= lambda arr: arr[1])
+            for fn in ARR[0]:
+                LOG_INFO(2, f"Error during convert {fn[1]} : {fn[0]}")
+        if len(ARR[1]) > 0:
+            ARR[1].sort()
+            for fn in ARR[1]:
+                LOG_INFO(2, f"Convert {fn} to output")
+
+def _update_summary(NAME, ARR):
+    if len(ARR) > 0:
+        LOG_INFO(1, NAME)
+        ARR.sort()
+        for fn in ARR:
+            if fn[0] == "*":
+                LOG_INFO(2, f"Update '{fn[1]}' file to remote")
+            if fn[0] == "+":
+                LOG_INFO(2, f"Add '{fn[1]}' file to remote")
 def main():
-    LOG_INFO(0, "Start convert")
-    C_ADV_FILE, C_MASTERDB_FILE, C_GENERIC_FILE, C_LOCALIZATION_FILE = Convert(full_update)
-    LOG_INFO(0, "Start update")
-    U_ADV_FILE, U_MASTERDB_FILE, U_GENERIC_FILE, U_LOCALIZATION_FILE = Update(full_update)
-    if len(C_ADV_FILE[0]) + len(C_ADV_FILE[1]) + len(C_MASTERDB_FILE[0]) + len(C_MASTERDB_FILE[1]) + len(C_GENERIC_FILE) + len(C_LOCALIZATION_FILE) > 0:
-        LOG_INFO(0, "---------------- Summary of converted files ----------------")
-        if len(C_ADV_FILE[0]) + len(C_ADV_FILE[1]) > 0:
-            LOG_INFO(1, "ADV")
-        for fn in C_ADV_FILE[0]:
-            LOG_INFO(2, f"Error during convert {fn[1]} : {fn[0]}")
-        for fn in C_ADV_FILE[1]:
-            LOG_INFO(2, f"Convert {fn[0]}")
+    if CONVERT:
+        LOG_INFO(0, "Start convert")
+        C_ADV_FILE, C_MASTERDB_FILE, C_GENERIC_FILE, C_LOCALIZATION_FILE = Convert(full_update)
+    if UPDATE:
+        LOG_INFO(0, "Start update")
+        U_ADV_FILE, U_MASTERDB_FILE = Update(full_update)
+    
+    if CONVERT:
+        if C_ADV_FILE != None and len(C_ADV_FILE[0]) + len(C_ADV_FILE[1]) + len(C_MASTERDB_FILE[0]) + len(C_MASTERDB_FILE[1]) + len(C_GENERIC_FILE) + len(C_LOCALIZATION_FILE) > 0:
+            LOG_INFO(0, "---------------- Summary of converted files ----------------")
+            
+            _convert_summary("ADV", C_ADV_FILE)
+            _convert_summary("MASTERDB", C_MASTERDB_FILE)
+            _convert_summary("GENERIC", C_GENERIC_FILE)
+            _convert_summary("LOCALIZATION", C_LOCALIZATION_FILE)
+            
+            LOG_INFO(0, "----------------------------------------------------------")
+        else:
+            LOG_INFO(0, "No files converted")
+    if UPDATE:
+        if U_ADV_FILE != None and len(U_ADV_FILE) + len(U_MASTERDB_FILE) > 0:
+            LOG_INFO(0, "---------------- Summary of updated files ----------------")
 
-        if len(C_MASTERDB_FILE[0]) + len(C_MASTERDB_FILE[1]) > 0:
-            LOG_INFO(1, "MASTERDB")
-        for fn in C_MASTERDB_FILE[0]:
-            LOG_INFO(2, f"Error during convert {fn[1]} : {fn[0]}")
-        for fn in C_MASTERDB_FILE[1]:
-            LOG_INFO(2, f"Convert {fn[0]}")
+            _update_summary("ADV", U_ADV_FILE)
+            _update_summary("MASTERDB", U_MASTERDB_FILE)
 
-        if len(C_GENERIC_FILE) > 0:
-            LOG_INFO(1, "GENERIC")
-        for fn in C_GENERIC_FILE:
-            LOG_INFO(2, f"{fn[2]}")
-
-        if len(C_LOCALIZATION_FILE) > 0:
-            LOG_INFO(1, "LOCALIZATION")
-        for fn in C_LOCALIZATION_FILE:
-            LOG_INFO(2, f"{fn[2]}")
-        LOG_INFO(0, "----------------------------------------------------------")
-    else:
-        LOG_INFO(0, "No files converted")
-
-    if len(U_ADV_FILE) + len(U_MASTERDB_FILE) + len(U_GENERIC_FILE) + len(U_LOCALIZATION_FILE) > 0:
-        LOG_INFO(0, "---------------- Summary of updated files ----------------")
-        if len(U_ADV_FILE) > 0:
-            LOG_INFO(1, "ADV")
-        for fn in U_ADV_FILE:
-            LOG_INFO(2, f"{fn[1]}")
-
-        if len(U_MASTERDB_FILE) > 0:
-            LOG_INFO(1, "MASTERDB")
-        for fn in U_MASTERDB_FILE:
-            LOG_INFO(2, f"{fn[1]}")
-
-        if len(U_GENERIC_FILE) > 0:
-            LOG_INFO(1, "GENERIC")
-        for fn in U_GENERIC_FILE:
-            LOG_INFO(2, f"{fn[1]}")
-
-        if len(U_LOCALIZATION_FILE) > 0:
-            LOG_INFO(1, "LOCALIZATION")
-        for fn in U_LOCALIZATION_FILE:
-            LOG_INFO(2, f"{fn[1]}")
-        LOG_INFO(0, "----------------------------------------------------------")
-    else:
-        LOG_INFO(0, "No files updated")
+            LOG_INFO(0, "----------------------------------------------------------")
+        else:
+            LOG_INFO(0, "No files updated")
 
 
 if __name__ == "__main__":
-    logger.setLevel("DEBUG")
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--fullupdate', action='store_true')
+    parser.add_argument('--DEBUG', action='store_true')
+    parser.add_argument('--convert', action='store_true')
+    parser.add_argument('--update', action='store_true')
+    args = parser.parse_args()
+    if args.fullupdate:
+        full_update = True
+    if args.DEBUG:
+        logger.setLevel("DEBUG")
+    else:
+        logger.setLevel("INFO")
+        import sys, os
+        sys.stdout = open(os.devnull, 'w')
+        rclone.logger.addHandler(RichHandler(console=Console(stderr=True)))
     LOG_INFO(0, "Start scripts")
+    if args.convert or args.update:
+        CONVERT = False
+        UPDATE = False
+        if args.convert:
+            CONVERT = True
+        if args.update:
+            UPDATE = True
     main()

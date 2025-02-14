@@ -1,9 +1,9 @@
 import logging
-from rich.logging import RichHandler
+from rich.logging import RichHandler, Console
 
 
 FORMAT = "%(message)s"
-logging.basicConfig(format=FORMAT, datefmt="[%X]", handlers=[RichHandler()])
+logging.basicConfig(format=FORMAT, datefmt="[%X]", handlers=[RichHandler(console=Console(stderr=True))])
 logger = logging.getLogger(__name__)
 print(f"Create logger {logger.name}")
 
