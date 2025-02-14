@@ -53,17 +53,16 @@ def convert_yaml_types_in_parallel(exception_list = None):
         shutil.rmtree(MASTERDB_JSON_PATH, True)
     global _save_func
     global _CustomLoader
-    from gakumasu_diff_to_json import process_list, yaml, save_json, CustomLoader
+    from gakumasu_diff_to_json import yaml, save_json, CustomLoader
     _save_func = save_json
     _CustomLoader = CustomLoader
     folder_path = "./gakumasu-diff/orig"
-    process_list = exception_list
     if not os.path.isdir(folder_path):
         raise FileNotFoundError(f"Folder {folder_path} is not exists")
     file_list = Helper_GetFilesFromDir(folder_path, ".yaml")
-    for n, obj in enumerate(file_list):
-        if process_list:
-            if obj[2][:-5] not in process_list:
+    for n, obj in reversed(list(enumerate(file_list))):
+        if exception_list:
+            if obj[2][:-5] not in exception_list:
                 file_list.pop(n)
     file_list_size = len(file_list)
     LOG_INFO(2, f"Converting {file_list_size} MasterDB files from yaml to json")
@@ -87,9 +86,15 @@ def JsonToXlsx(input_path, output_path):
     for k,v in input_data.items():
         # value = v            # Uncomment this when disable use defined value
         value = MDB.get(k, "") # Comment this when disable use defined value
+
+        text = Serialize(text)
+        trans = Serialize(value)
+        if text == value:
+            value = ""
         if value == "":
             counter += 1
-        input_records.append({"text":Serialize(k), "trans":Serialize(value)})
+        
+        input_records.append({"text":text, "trans":trans})
 
     output_dataframe = pd.DataFrame.from_records(input_records)
     writer = pd.ExcelWriter(output_path, engine="xlsxwriter") 
@@ -108,15 +113,19 @@ def XlsxToJson_parallels(paths):
     converted_file_list = []
     error_file_list = []
     try:
-        XlsxToJson(input_path, output_path)
+        error_list = XlsxToJson(input_path, output_path)
+        if error_list is not None and len(error_list) > 0:
+            for error in error_list:
+                error_file_list.append((error, os.path.basename(input_path)))
         converted_file_list.append(os.path.basename(input_path))
     except Exception as e:
         # LOG_ERROR(2, f"Error during Convert MasterDB drive to output: {e}")
         # logger.exception(e)
-        error_file_list.append((os.path.basename(input_path), e))
+        error_file_list.append((e, os.path.basename(input_path)))
     return error_file_list, converted_file_list
 
 def XlsxToJson(input_path, output_path):
+    error_list = []
     input_dataframe = pd.read_excel(input_path, na_values="", keep_default_na=False, na_filter=False, engine="openpyxl")
     input_dataframe = input_dataframe.convert_dtypes()
     input_dataframe.fillna("", inplace=True)
@@ -126,8 +135,15 @@ def XlsxToJson(input_path, output_path):
         input_record_keys = input_record.keys()
         if not "text" in input_record_keys or not type(input_record['text']) == str:
             continue
-        if not "trans" in input_record_keys or not type(input_record['trans']) == str:
-            LOG_WARN(3, f"{f}의 {input_record['text']}의 번역 값이 존재하지 않습니다. 넘어갑니다.")
+        if (not "trans" in input_record_keys or not type(input_record['trans']) == str or \
+            (input_record['text'] != "" and input_record['trans'] == "")) \
+            or input_record['text'] == input_record['trans']:
+            MSG = input_record['text'].replace('\n','\\n').replace('\r','\\r').replace('\t','\\t')
+            if len(MSG) > 200:
+                MSG = MSG[:200]
+            MSG = f"{os.path.basename(input_path)}에서 '{MSG}'의 번역 값이 존재하지 않습니다. 넘어갑니다."
+            error_list.append(ValueError(MSG))
+            LOG_WARN(3, MSG)
             continue
         # 수정해야되는 내용 수정
         if input_record["trans"].startswith("'"):
@@ -137,6 +153,7 @@ def XlsxToJson(input_path, output_path):
     os.makedirs(os.path.split(output_path)[0], exist_ok=True)
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, allow_nan=False, indent=4)
+    return error_list
 """
 
 Folder Processor
@@ -314,5 +331,7 @@ def ConvertDriveToOutput(bFullUpdate=False):
     pretranslate_process.IGNORE_INPUT = True
     pretranslate_process.merge_todo()
     os.chdir(ORIGIN_CWD)
+
+    shutil.copytree(MASTERDB_ORIGINAL_DATA_PATH, MASTERDB_OUTPUT_PATH, dirs_exist_ok=True)
 
     return error_file_list, converted_file_list
