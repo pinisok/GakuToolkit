@@ -88,7 +88,7 @@ def ConvertDriveToOutput(bFullUpdate=False):
         drive_file_paths = [(LOCALIZATION_DRIVE_PATH, LOCALIZATION_FILE, os.path.basename(LOCALIZATION_DRIVE_PATH))]
     else:
         LOG_DEBUG(2, "Check updated files")
-        check_result = rclone.check(LOCALIZATION_REMOTE_PATH, LOCALIZATION_DRIVE_PATH)
+        check_result = rclone.check(LOCALIZATION_REMOTE_PATH, DRIVE_PATH)
         drive_file_paths = []
         if len(check_result) > 0:
             rclone.copy(LOCALIZATION_REMOTE_PATH, DRIVE_PATH)

@@ -112,7 +112,7 @@ def ConvertDriveToOutput(bFullUpdate=False):
         drive_file_paths = Helper_GetFilesFromDirByCheck(check_result, GENERIC_DRIVE_LYRICS_PATH, ".xlsx")
         rclone.copy(GENERIC_REMOTE_LYRICS_PATH, GENERIC_DRIVE_LYRICS_PATH)
         for file in GENERIC_FILE_LIST:
-            check_result = rclone.check(GENERIC_REMOTE_PATH+file, GENERIC_DRIVE_PATH+file)
+            check_result = rclone.check(GENERIC_REMOTE_PATH+file, GENERIC_DRIVE_PATH)
             if len(check_result) > 0:
                 rclone.copy(GENERIC_REMOTE_PATH+file, GENERIC_DRIVE_PATH)
                 drive_file_paths += [(GENERIC_DRIVE_PATH+file, file, os.path.basename(file))]
