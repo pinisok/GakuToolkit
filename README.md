@@ -25,6 +25,7 @@ GakuToolkit 은 외부 폴더의 엑셀 시트의 텍스트, JSON 변환을 중�
 - [x] Generic 처리
 - [x] Localization 처리
 - [x] .gitignore 추가
+- [ ] Summary 에 업로드하거나 수정된 파일 링크 달기
 - [ ] Dockerfile 작성
     - [ ] 실행 전 서브모듈 업데이트
     - [ ] 실행 로그 저장
