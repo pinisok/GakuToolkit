@@ -1,13 +1,10 @@
-import os, sys
+import os, sys, shutil, multiprocessing, yaml
 from datetime import datetime
-import shutil
 
-import pandas as pd
-import openpyxl
-import xlsxwriter
+import pandas as pd, openpyxl, xlsxwriter, tqdm
 
-from .helper import *
 from . import rclone
+from .helper import *
 from .log import *
 """
 Converter Helper
@@ -28,6 +25,55 @@ def Deserialize(string:str):
         result = result.replace(obj[1], obj[0])
     return result
 
+# Extend of gakumasu_diff_to_json.py at gakumas-master-translation
+def convert_yaml_types(obj):
+    file_path, file = obj
+    try:
+        # 预处理文件：替换制表符为 4 个空格
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        # content = content.replace('\t', '    ')  # 替换制表符
+        content = content.replace(": \t", ": \"\t\"")  # 替换制表符
+        # 解析 YAML 内容
+        # data = yaml.safe_load(content)
+        data = yaml.load(content, _CustomLoader)
+        _save_func(data, file[:-5])
+        # print(f"文件: {file_path}")
+        # print(f"类型: {type(data)}\n")
+    except Exception as e:
+        print(f"加载文件 {file_path} 时出错: {e}")
+
+def convert_yaml_types_in_parallel(exception_list = None):
+    if GIT_MASTERDB_PATH+"/scripts" not in sys.path:
+        sys.path.append(GIT_MASTERDB_PATH+"/scripts")
+    ORIGIN_CWD = os.getcwd()
+    os.chdir(GIT_MASTERDB_PATH)
+
+    if os.path.exists(MASTERDB_JSON_PATH):
+        shutil.rmtree(MASTERDB_JSON_PATH, True)
+    global _save_func
+    global _CustomLoader
+    from gakumasu_diff_to_json import process_list, yaml, save_json, CustomLoader
+    _save_func = save_json
+    _CustomLoader = CustomLoader
+    folder_path = "./gakumasu-diff/orig"
+    process_list = exception_list
+    if not os.path.isdir(folder_path):
+        raise FileNotFoundError(f"Folder {folder_path} is not exists")
+    file_list = Helper_GetFilesFromDir(folder_path, ".yaml")
+    for n, obj in enumerate(file_list):
+        if process_list:
+            if obj[2][:-5] not in process_list:
+                file_list.pop(n)
+    file_list_size = len(file_list)
+    LOG_INFO(2, f"Converting {file_list_size} MasterDB files from yaml to json")
+    pool = multiprocessing.Pool()
+    for _ in tqdm.tqdm(pool.imap_unordered(convert_yaml_types, [(abs_path, filename) for abs_path, rel_path, filename in file_list]), total=file_list_size):
+        pass
+    pool.close()
+    pool.join()
+
+    os.chdir(ORIGIN_CWD)
 
 """
 Converter
@@ -57,9 +103,22 @@ def JsonToXlsx(input_path, output_path):
     writer.close()
     return counter
 
+def XlsxToJson_parallels(paths):
+    input_path, output_path = paths
+    converted_file_list = []
+    error_file_list = []
+    try:
+        XlsxToJson(input_path, output_path)
+        converted_file_list.append(os.path.basename(input_path))
+    except Exception as e:
+        # LOG_ERROR(2, f"Error during Convert MasterDB drive to output: {e}")
+        # logger.exception(e)
+        error_file_list.append((os.path.basename(input_path), e))
+    return error_file_list, converted_file_list
+
 def XlsxToJson(input_path, output_path):
     input_dataframe = pd.read_excel(input_path, na_values="", keep_default_na=False, na_filter=False, engine="openpyxl")
-    input_dataframe.convert_dtypes()
+    input_dataframe = input_dataframe.convert_dtypes()
     input_dataframe.fillna("", inplace=True)
     input_records = input_dataframe.to_dict(orient="records")
     data = {}
@@ -128,17 +187,7 @@ def UpdateOriginalToDrive(bFullUpdate = False):
         for _, _, name in original_file_paths:
             file_list.append(name[:-5])
 
-    ORIGIN_CWD = os.getcwd()
-    os.chdir(GIT_MASTERDB_PATH)
-    sys.path.append(GIT_MASTERDB_PATH+"/scripts")
-    import gakumasu_diff_to_json
-    import pretranslate_process
-    gakumasu_diff_to_json.process_list = file_list
-    LOG_DEBUG(2, "Convert db's yaml to json")
-    if os.path.exists(MASTERDB_JSON_PATH):
-        shutil.rmtree(MASTERDB_JSON_PATH, True)
-    gakumasu_diff_to_json.convert_yaml_types()
-    os.chdir(ORIGIN_CWD)
+    convert_yaml_types_in_parallel(file_list)
 
     #Use default value
     LOG_DEBUG(2, "Copy output masterdb data to gakumas-master-translation's data folder")
@@ -146,7 +195,11 @@ def UpdateOriginalToDrive(bFullUpdate = False):
     shutil.copytree(MASTERDB_OUTPUT_PATH, MASTERDB_ORIGINAL_DATA_PATH)
 
     #Generate Todo
+    ORIGIN_CWD = os.getcwd()
     os.chdir(GIT_MASTERDB_PATH)
+    if GIT_MASTERDB_PATH+"/scripts" not in sys.path:
+        sys.path.append(GIT_MASTERDB_PATH+"/scripts")
+    import pretranslate_process
     if os.path.exists(GIT_MASTERDB_PATH+"/pretranslate_todo"):
         shutil.rmtree(GIT_MASTERDB_PATH+"/pretranslate_todo")
     pretranslate_process.gen_todo("gakumasu-diff/json")
@@ -178,10 +231,10 @@ def UpdateOriginalToDrive(bFullUpdate = False):
     LOG_DEBUG(2, f"file_list : {file_list}")
     for obj in file_list:
         if obj[0] == "*":
-            LOG_WARN(2, f"Update '{obj[1]}' file to remote")
+            LOG_DEBUG(2, f"Update '{obj[1]}' file to remote")
     for obj in file_list:
         if obj[0] == "+":
-            LOG_WARN(2, f"Add new '{obj[1]}' file to remote")
+            LOG_DEBUG(2, f"Add new '{obj[1]}' file to remote")
     if False:
         LOG_DEBUG(2, f"Upload result to remote")
         rclone.sync(MASTERDB_DRIVE_PATH, MASTERDB_REMOTE_PATH)
@@ -212,16 +265,7 @@ def ConvertDriveToOutput(bFullUpdate=False):
             todo_list.append(filename[:-5])
 
     ORIGIN_CWD = os.getcwd()
-    os.chdir(GIT_MASTERDB_PATH)
-    sys.path.append(GIT_MASTERDB_PATH+"/scripts")
-    import gakumasu_diff_to_json
-    import pretranslate_process
-    gakumasu_diff_to_json.process_list = todo_list
-    LOG_DEBUG(2, "Convert db's yaml to json")
-    if os.path.exists(MASTERDB_JSON_PATH):
-        shutil.rmtree(MASTERDB_JSON_PATH, True)
-    gakumasu_diff_to_json.convert_yaml_types()
-    os.chdir(ORIGIN_CWD)
+    convert_yaml_types_in_parallel(todo_list)
 
     #Use default value
     LOG_DEBUG(2, "Copy output masterdb data to gakumas-master-translation's data folder")
@@ -232,6 +276,7 @@ def ConvertDriveToOutput(bFullUpdate=False):
     LOG_DEBUG(2, "Generate todo")
     os.chdir(GIT_MASTERDB_PATH)
     shutil.rmtree(GIT_MASTERDB_PATH+"/pretranslate_todo", True)
+    import pretranslate_process
     pretranslate_process.gen_todo("gakumasu-diff/json")
     os.chdir(ORIGIN_CWD)
 
@@ -239,17 +284,30 @@ def ConvertDriveToOutput(bFullUpdate=False):
     LOG_INFO(2, f"Converting {len(drive_file_paths)} MasterDB files")
     converted_file_list = []
     error_file_list = []
-    for abs_path, rel_path, filename in drive_file_paths:
-        input_path = abs_path
-        output_path = os.path.join(GIT_MASTERDB_PATH + "/pretranslate_todo/todo/new", filename[:-5]+"_translated.json")
-        LOG_DEBUG(2, f"Start convert from drive to output '{input_path}' to '{output_path}'")
-        try:
-            XlsxToJson(input_path, output_path)
-            converted_file_list.append(filename)
-        except Exception as e:
-            LOG_ERROR(2, f"Error during Convert MasterDB drive to output: {e}")
-            logger.exception(e)
-            error_file_list.append((filename, e))
+
+    if True: # Use multiprocessing
+        file_list_size = len(drive_file_paths)
+        pool = multiprocessing.Pool()
+        with tqdm.tqdm(total=file_list_size) as pbar:
+            for result in pool.imap_unordered(XlsxToJson_parallels, [(abs_path, os.path.join(GIT_MASTERDB_PATH + "/pretranslate_todo/todo/new", filename[:-5]+"_translated.json")) for abs_path, rel_path, filename in drive_file_paths]):
+                pbar.update()
+                pbar.refresh()
+                error_file_list += result[0]
+                converted_file_list += result[1]
+        pool.close()
+        pool.join()
+    else:
+        for abs_path, rel_path, filename in drive_file_paths:
+            input_path = abs_path
+            output_path = os.path.join(GIT_MASTERDB_PATH + "/pretranslate_todo/todo/new", filename[:-5]+"_translated.json")
+            LOG_DEBUG(2, f"Start convert from drive to output '{input_path}' to '{output_path}'")
+            try:
+                XlsxToJson(input_path, output_path)
+                converted_file_list.append(filename)
+            except Exception as e:
+                LOG_ERROR(2, f"Error during Convert MasterDB drive to output: {e}")
+                logger.exception(e)
+                error_file_list.append((filename, e))
 
     LOG_INFO(2, f"Build MasterDB files")
     os.chdir(GIT_MASTERDB_PATH)

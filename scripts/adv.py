@@ -1,9 +1,6 @@
-import os
-import re
+import os, re, csv, difflib, multiprocessing, tqdm
 from typing import Callable, Optional, Union
-import csv
 from io import StringIO
-import difflib
 from datetime import datetime
 
 import pandas as pd
@@ -275,23 +272,46 @@ def CsvToTxt(read_fp, write_path, original_path):
     csv_strings = "".join(read_fp.readlines())
     with open(original_path, "r", encoding='utf-8') as write_fp:
         txt_strings = "".join(write_fp.readlines())
-    try:
-        txt_strings = _internalCsvToTxt(csv_strings, txt_strings)
-        with open(write_path, "w", encoding="utf-8") as write_fp:
-            write_fp.write(txt_strings)
-    except Exception as e:
-        LOG_ERROR(3, f"Error {e} at '{os.path.basename(write_path)}'")
-        logger.exception(e)
+    txt_strings = _internalCsvToTxt(csv_strings, txt_strings)
+    with open(write_path, "w", encoding="utf-8") as write_fp:
+        write_fp.write(txt_strings)
 
-def XlsxToTxt(read_fp, write_path, original_path):
+def XlsxToTxt_parallels(obj):
+    input_path, filename = obj
+    output_path = os.path.join(ADV_OUTPUT_PATH, filename[:-5]+".txt")
+    original_path = os.path.join(ADV_ORIGINAL_PATH, filename[:-5]+".txt")
+    converted_file_list = []
+    error_file_list = []
+    try:
+        XlsxToTxt(input_path, output_path, original_path)
+        converted_file_list.append(filename)
+    except Exception as e:
+        # LOG_ERROR(2, f"Error: {e}")
+        # logger.exception(e)
+        error_file_list.append((e, filename))
+    return error_file_list, converted_file_list
+
+def XlsxToTxt(input_path, write_path, original_path):
+    input_fp = open(input_path, "rb")
     csvIO = StringIO()
-    XlsxToCsv(read_fp, csvIO, os.path.basename(write_path))
+    XlsxToCsv(input_fp, csvIO, os.path.basename(write_path))
     csvIO.seek(0)
     CsvToTxt(csvIO, write_path, original_path)
 
 # 원본 > 번역 변환
-def TxtToXlsx(read_fp, output_path, file_name:str):
-    csv = _internalTxtToScv(read_fp, file_name)
+
+def TxtToXlsx_parallels(obj):
+    input_path, output_path, filename = obj
+    try:
+        TxtToXlsx(input_path, output_path, filename)
+    except Exception as e:
+        LOG_ERROR(2, f"Error: {e}")
+        logger.exception(e)
+
+
+def TxtToXlsx(input_path, output_path, file_name:str):
+    with open(input_path, "r", encoding="utf-8") as input_fp:
+        csv = _internalTxtToScv(input_fp, file_name)
     dataframe = _internalCsvToDataFrame(csv)
     
     if(os.path.exists(output_path)):
@@ -372,35 +392,51 @@ def UpdateOriginalToDrive(bFullUpdate=False):
         LOG_INFO(2, "ADV is not updated, skip")
         return []
     
-    LOG_INFO(2, f"Updating {len(original_file_paths)} adv files")
-    for abs_path, rel_path, filename in original_file_paths:
-        if filename in ADV_BLACKLIST_FILE:
-            continue
-        foldername = _internalGetOutputPath(filename)
-        if foldername in ADV_BLACKLIST_FOLDER:
-            continue
-        input_path = rel_path
-        output_path = os.path.join(ADV_DRIVE_PATH, foldername, filename[:-4]+".xlsx")
-        LOG_DEBUG(2, f"Start convert from drive to output '{input_path}' to '{output_path}'")
-        input_fp = open(input_path, "r", encoding="utf-8")
-        try:
-            TxtToXlsx(input_fp, output_path, filename)
-        except Exception as e:
-            LOG_ERROR(2, f"Error: {e}")
-            logger.exception(e)
-        finally:
-            if not input_fp.closed:
-                input_fp.close()
+    if True:
+        file_list = []
+        for abs_path, rel_path, filename in original_file_paths:
+            if filename in ADV_BLACKLIST_FILE:
+                continue
+            foldername = _internalGetOutputPath(filename)
+            if foldername in ADV_BLACKLIST_FOLDER:
+                continue
+            input_path = rel_path
+            output_path = os.path.join(ADV_DRIVE_PATH, foldername, filename[:-4]+".xlsx")
+            file_list.append((input_path, output_path, filename))
+        file_list_size = len(file_list)
+        LOG_INFO(2, f"Updating {file_list_size} adv files")
+        pool = multiprocessing.Pool()
+        for _ in tqdm.tqdm(pool.imap_unordered(TxtToXlsx_parallels, file_list), total=file_list_size):
+            pass
+        pool.close()
+        pool.join()
+        
+    else:
+        for abs_path, rel_path, filename in original_file_paths:
+            if filename in ADV_BLACKLIST_FILE:
+                continue
+            foldername = _internalGetOutputPath(filename)
+            if foldername in ADV_BLACKLIST_FOLDER:
+                continue
+            input_path = rel_path
+            output_path = os.path.join(ADV_DRIVE_PATH, foldername, filename[:-4]+".xlsx")
+            LOG_DEBUG(2, f"Start convert from drive to output '{input_path}' to '{output_path}'")
+            
+            try:
+                TxtToXlsx(input_path, output_path, filename)
+            except Exception as e:
+                LOG_ERROR(2, f"Error: {e}")
+                logger.exception(e)
     
     file_list = rclone.check(ADV_DRIVE_PATH, ADV_REMOTE_PATH)
     LOG_WARN(2, f"There is {len(file_list)} files changed")
     LOG_DEBUG(2, f"file_list : {file_list}")
     for obj in file_list:
         if obj[0] == "*":
-            LOG_WARN(2, f"Update '{obj[1]}' file to remote")
+            LOG_DEBUG(2, f"Update '{obj[1]}' file to remote")
     for obj in file_list:
         if obj[0] == "+":
-            LOG_WARN(2, f"Add new '{obj[1]}' file to remote")
+            LOG_DEBUG(2, f"Add new '{obj[1]}' file to remote")
     # TODO Check result is okay
     if False:
         rclone.sync(ADV_DRIVE_PATH, ADV_REMOTE_PATH)
@@ -425,22 +461,33 @@ def ConvertDriveToOutput(bFullUpdate=False):
         LOG_INFO(2, "ADV is not updated, skip")
         return [],[]
     LOG_INFO(2, f"Converting {len(drive_file_paths)} adv files")
+
     converted_file_list = []
     error_file_list = []
-    for abs_path, rel_path, filename in drive_file_paths:
-        input_path = abs_path
-        output_path = os.path.join(ADV_OUTPUT_PATH, filename[:-5]+".txt")
-        original_path = os.path.join(ADV_ORIGINAL_PATH, filename[:-5]+".txt")
-        LOG_DEBUG(2, f"Start convert from drive to output '{input_path}' to '{output_path}'")
-        input_fp = open(input_path, "rb")
-        try:
-            XlsxToTxt(input_fp, output_path, original_path)
-            converted_file_list.append([abs_path, rel_path, filename])
-        except Exception as e:
-            LOG_ERROR(2, f"Error during Convert ADV drive to output: {e}")
-            logger.exception(e)
-            error_file_list.append((e, filename))
-        finally:
-            if input_fp != None and not input_fp.closed:
-                input_fp.close()
+
+    if True: #TODO Change this when multiprocessing flag completed
+        file_list_size = len(drive_file_paths)
+        pool = multiprocessing.Pool()
+        with tqdm.tqdm(total=file_list_size) as pbar:
+            for result in pool.imap_unordered(XlsxToTxt_parallels, [(abs_path, filename) for abs_path, rel_path, filename in drive_file_paths]):
+                pbar.update()
+                pbar.refresh()
+                error_file_list += result[0]
+                converted_file_list += result[1]
+        pool.close()
+        pool.join()
+    else:
+        for abs_path, rel_path, filename in drive_file_paths:
+            input_path = abs_path
+            output_path = os.path.join(ADV_OUTPUT_PATH, filename[:-5]+".txt")
+            original_path = os.path.join(ADV_ORIGINAL_PATH, filename[:-5]+".txt")
+            LOG_DEBUG(2, f"Start convert from drive to output '{input_path}' to '{output_path}'")
+            
+            try:
+                XlsxToTxt(input_path, output_path, original_path)
+                converted_file_list.append([abs_path, rel_path, filename])
+            except Exception as e:
+                LOG_ERROR(2, f"Error during Convert ADV drive to output: {e}")
+                logger.exception(e)
+                error_file_list.append((e, filename))
     return error_file_list, converted_file_list
