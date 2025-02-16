@@ -14,3 +14,4 @@ cd output
 git add --all
 git commit -m "Update translate"
 git push origin main
+bash
