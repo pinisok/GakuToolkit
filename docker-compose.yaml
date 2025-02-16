@@ -6,7 +6,7 @@ services:
     volumes:
       - /mnt/data/supervisor/homeassistant/GakuToolkit/cache:/app/GakuToolkit/cache:rw
       - /mnt/data/supervisor/homeassistant/GakuToolkit/.ssh:/root/.ssh:rw
-      - GakumasTranslationKorTest:/app/GakuToolkit/drive:rw
+      - GakumasTranslationKorTest:/app/GakuToolkit/res/drive:rw
     environment:
       GIT_EMAIL: prain3ps@gmail.com
       GIT_NAME: pinisok
