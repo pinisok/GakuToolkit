@@ -17,17 +17,14 @@ from rich.progress import (
 
 from .log import *
 
-SECRET_NAME = "RCLONE_CONFIG"
 
 def LoadRemoteConfig(name):
     config = configparser.ConfigParser()
-    config.read(f'/run/secrets/{SECRET_NAME}')
+    config.read(os.getenv("RCLONE_CONFIG"))
     if len(config) == 0:
         raise Exception(f"Failed to load rclone config")
-    if name is None or name == "":
-        raise Exception("RCLONE_NAME not found in environment")
     if not name in config:
-        raise Exception(f"Config {name} not found from RCLONE_CONFIG")
+        raise Exception(f"Config {name} not found from '{os.getenv('RCLONE_CONFIG')}'")
     if len(config[name]) == 0:
         raise Exception(f"Config {name} is empty")
     return config
