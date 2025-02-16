@@ -4,4 +4,4 @@ imas_tools==0.4.8
 openpyxl>=3.1.5
 xlsxwriter
 tqdm
-yaml
+PyYAML
