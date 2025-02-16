@@ -1,0 +1,7 @@
+name: worker
+
+services:
+  gakutoolkit:
+    image: ghcr.io/pinisok/gakutoolkit:latest
+    volumes:
+      - './cache:/app/GakuToolkit/cache'
