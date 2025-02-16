@@ -99,7 +99,7 @@ def init():
         raise Exception("Rclone is not installed")
     version = rclone.version()[1:].split(".")
     if int(version[0]) < 1 or int(version[0]) == 1 and int(version[1]) < 69:
-        raise Exception("Please install newer rclone client")
+        raise Exception(f"Please install newer rclone client, Current version : {rclone.version()}. Need to newer or equal than v1.69")
     # print("Setting up rclone")
     remote_name = os.getenv("REMOTE_NAME")
     if remote_name == None:
