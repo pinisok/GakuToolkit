@@ -12,4 +12,8 @@ services:
       GIT_NAME: pinisok
       REMOTE_NAME: gakumas
       RCLONE_CONFIG: /app/GakuToolkit/cache/rclone.conf
-      
+
+
+volumes:
+  GakumasTranslationKorTest:
+    external: true
