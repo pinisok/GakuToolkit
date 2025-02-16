@@ -5,6 +5,7 @@ git config --global user.email "$GIT_EMAIL"
 git config --global user.name "$GIT_NAME"
 
 git pull origin main
+pip install -r requirements.txt
 
 git submodule update --init --remote --recursive
 
