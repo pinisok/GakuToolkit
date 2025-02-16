@@ -18,4 +18,4 @@ RUN git clone https://github.com/pinisok/GakuToolkit ./GakuToolkit
 
 WORKDIR /app/GakuToolkit
 RUN pip install -r ./requirements.txt --break-system-packages
-CMD [ "/bin/bash", "/app/GakuToolkit/docker-entrypoint.sh"]
+ENTRYPOINT [ "/bin/bash", "/app/GakuToolkit/docker-entrypoint.sh"]
