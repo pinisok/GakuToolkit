@@ -7,3 +7,4 @@
 [submodule "output"]
 	path = output
 	url = git@github.com:pinisok/GakumasTranslationDataKorTest/
+	branch = main
