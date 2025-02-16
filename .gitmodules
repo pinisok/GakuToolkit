@@ -6,4 +6,4 @@
 	url = https://github.com/DreamGallery/Campus-adv-txts/
 [submodule "output"]
 	path = output
-	url = https://github.com/pinisok/GakumasTranslationDataKorTest/
+	url = git@github.com:pinisok/GakumasTranslationDataKorTest/
