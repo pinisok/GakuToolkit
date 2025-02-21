@@ -9,15 +9,20 @@ full_update = False
 CONVERT = True
 UPDATE = True
 
-def Convert(bFullUpdate):
-    LOG_INFO(1, "Converting ADV")
-    ERR_ADV_FILE, ADV_FILE = adv.ConvertDriveToOutput(bFullUpdate)
-    LOG_INFO(1, "Converting MasterDB")
-    ERR_MASTERDB_FILE, MASTERDB_FILE = masterdb.ConvertDriveToOutput(bFullUpdate)
-    LOG_INFO(1, "Converting Generic")
-    ERR_GENERIC_FILE, GENERIC_FILE = generic.ConvertDriveToOutput(bFullUpdate)
-    LOG_INFO(1, "Converting Localization")
-    ERR_LOCALIZATION_FILE, LOCALIZATION_FILE = localization.ConvertDriveToOutput(bFullUpdate)
+def Convert(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True, bFullUpdate=False):
+    ERR_ADV_FILE = ADV_FILE = ERR_MASTERDB_FILE = MASTERDB_FILE = ERR_GENERIC_FILE = GENERIC_FILE = ERR_LOCALIZATION_FILE = LOCALIZATION_FILE = []
+    if ADV:
+        LOG_INFO(1, "Converting ADV")
+        ERR_ADV_FILE, ADV_FILE = adv.ConvertDriveToOutput(bFullUpdate)
+    if MASTERDB:
+        LOG_INFO(1, "Converting MasterDB")
+        ERR_MASTERDB_FILE, MASTERDB_FILE = masterdb.ConvertDriveToOutput(bFullUpdate)
+    if GENERIC:
+        LOG_INFO(1, "Converting Generic")
+        ERR_GENERIC_FILE, GENERIC_FILE = generic.ConvertDriveToOutput(bFullUpdate)
+    if LOCALIZATION:
+        LOG_INFO(1, "Converting Localization")
+        ERR_LOCALIZATION_FILE, LOCALIZATION_FILE = localization.ConvertDriveToOutput(bFullUpdate)
 
     if len(ADV_FILE) + len(MASTERDB_FILE) + len(GENERIC_FILE) + len(LOCALIZATION_FILE) > 0:
         LOG_INFO(1, "Write version.txt")
@@ -27,11 +32,14 @@ def Convert(bFullUpdate):
         LOG_INFO(1, "No files updated")
     return (ERR_ADV_FILE, ADV_FILE), (ERR_MASTERDB_FILE, MASTERDB_FILE), (ERR_GENERIC_FILE, GENERIC_FILE), (ERR_LOCALIZATION_FILE, LOCALIZATION_FILE)
 
-def Update(bFullUpdate):
-    LOG_INFO(1, "Updating ADV")
-    ADV_FILE = adv.UpdateOriginalToDrive()
-    LOG_INFO(1, "Updating MasterDB")
-    MASTERDB_FILE = masterdb.UpdateOriginalToDrive()
+def Update(ADV=True, MASTERDB=True, bFullUpdate=False):
+    ADV_FILE = MASTERDB_FILE = []
+    if ADV:
+        LOG_INFO(1, "Updating ADV")
+        ADV_FILE = adv.UpdateOriginalToDrive()
+    if MASTERDB:
+        LOG_INFO(1, "Updating MasterDB")
+        MASTERDB_FILE = masterdb.UpdateOriginalToDrive()
 
     return ADV_FILE, MASTERDB_FILE
     
@@ -58,13 +66,13 @@ def _update_summary(NAME, ARR):
                 LOG_INFO(2, f"Update '{fn[1]}' file to remote")
             if fn[0] == "+":
                 LOG_INFO(2, f"Add '{fn[1]}' file to remote")
-def main():
+def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
     if CONVERT:
         LOG_INFO(0, "Start convert")
-        C_ADV_FILE, C_MASTERDB_FILE, C_GENERIC_FILE, C_LOCALIZATION_FILE = Convert(full_update)
+        C_ADV_FILE, C_MASTERDB_FILE, C_GENERIC_FILE, C_LOCALIZATION_FILE = Convert(ADV, MASTERDB, GENERIC, LOCALIZATION, full_update)
     if UPDATE:
         LOG_INFO(0, "Start update")
-        U_ADV_FILE, U_MASTERDB_FILE = Update(full_update)
+        U_ADV_FILE, U_MASTERDB_FILE = Update(ADV, MASTERDB, full_update)
     
     if CONVERT:
         if C_ADV_FILE != None and len(C_ADV_FILE[0]) + len(C_ADV_FILE[1]) + len(C_MASTERDB_FILE[0]) + len(C_MASTERDB_FILE[1]) + len(C_GENERIC_FILE) + len(C_LOCALIZATION_FILE) > 0:
@@ -96,6 +104,10 @@ if __name__ == "__main__":
     parser.add_argument('--DEBUG', action='store_true')
     parser.add_argument('--convert', action='store_true')
     parser.add_argument('--update', action='store_true')
+    parser.add_argument('--adv', action='store_true')
+    parser.add_argument('--masterdb', action='store_true')
+    parser.add_argument('--generic', action='store_true')
+    parser.add_argument('--localization', action='store_true')
     args = parser.parse_args()
     if args.fullupdate:
         full_update = True
@@ -114,4 +126,23 @@ if __name__ == "__main__":
             CONVERT = True
         if args.update:
             UPDATE = True
-    main()
+    ADV = True
+    MASTERDB = True
+    GENERIC = True
+    LOCALIZATION = True
+    if args.adv or args.masterdb:
+        ADV = False
+        MASTERDB = False
+        GENERIC = False
+        LOCALIZATION = False
+        if args.adv:
+            ADV = True
+        if args.masterdb:
+            MASTERDB = True
+        if args.generic:
+            GENERIC = True
+        if args.localization:
+            LOCALIZATION = True
+
+
+    main(ADV, MASTERDB, GENERIC, LOCALIZATION)
