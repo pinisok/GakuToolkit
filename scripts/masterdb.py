@@ -87,7 +87,7 @@ def JsonToXlsx(input_path, output_path):
         # value = v            # Uncomment this when disable use defined value
         value = MDB.get(k, "") # Comment this when disable use defined value
 
-        text = Serialize(text)
+        text = Serialize(k)
         trans = Serialize(value)
         if text == value:
             value = ""
@@ -172,7 +172,7 @@ MASTERDB_CACHE_FILE = "./cache/masterdb_update_date.txt"
 
 # 업데이트 반영
 # gakumas-diff > Google Drive
-def UpdateOriginalToDrive(bFullUpdate = False):
+def UpdateOriginalToDrive():
     # Check modified file from git commit
     last_update_date = None
     LOG_DEBUG(2, "Check cache file")
@@ -187,7 +187,7 @@ def UpdateOriginalToDrive(bFullUpdate = False):
     LOG_DEBUG(2, "Write datetime cache file")
     with open(MASTERDB_CACHE_FILE, 'w') as f:
         f.write(datetime.today().isoformat(" "))
-    if bFullUpdate:
+    if False:
         original_file_paths = None
     elif last_update_date != None:
         LOG_DEBUG(2, "Check git diff")
@@ -232,6 +232,7 @@ def UpdateOriginalToDrive(bFullUpdate = False):
     for abs, rel, name in input_paths:
         input_path = abs
         output_path = os.path.join(MASTERDB_DRIVE_PATH, name[:-5]+".xlsx")
+        _empty_value_count = 0
         try:
             LOG_DEBUG(2, f"Convert from {input_path} to {output_path}")
             _empty_value_count = JsonToXlsx(input_path, output_path)

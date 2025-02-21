@@ -29,9 +29,9 @@ def Convert(bFullUpdate):
 
 def Update(bFullUpdate):
     LOG_INFO(1, "Updating ADV")
-    ADV_FILE = adv.UpdateOriginalToDrive(bFullUpdate)
+    ADV_FILE = adv.UpdateOriginalToDrive()
     LOG_INFO(1, "Updating MasterDB")
-    MASTERDB_FILE = masterdb.UpdateOriginalToDrive(bFullUpdate)
+    MASTERDB_FILE = masterdb.UpdateOriginalToDrive()
 
     return ADV_FILE, MASTERDB_FILE
     

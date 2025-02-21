@@ -4,16 +4,11 @@ services:
   gakutoolkit:
     image: ghcr.io/pinisok/gakutoolkit:latest
     volumes:
-      - /mnt/data/supervisor/homeassistant/GakuToolkit/cache:/app/GakuToolkit/cache:rw
-      - /mnt/data/supervisor/homeassistant/GakuToolkit/.ssh:/root/.ssh:rw
-      - GakumasTranslationKorTest:/app/GakuToolkit/res/drive:rw
+      - ./cache:/app/GakuToolkit/cache:rw
+      - /home/gpy/.ssh:/root/.ssh:rw
+      - ./drive:/app/GakuToolkit/res/drive:rw
     environment:
       GIT_EMAIL: prain3ps@gmail.com
       GIT_NAME: pinisok
       REMOTE_NAME: gakumas
       RCLONE_CONFIG: /app/GakuToolkit/cache/rclone.conf
-
-
-volumes:
-  GakumasTranslationKorTest:
-    external: true

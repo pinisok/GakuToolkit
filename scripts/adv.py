@@ -366,7 +366,7 @@ ADV_CACHE_FILE = "./cache/adv_update_date.txt"
 
 # 업데이트 반영
 # Campus-Adv-txts > Google Drive
-def UpdateOriginalToDrive(bFullUpdate=False):
+def UpdateOriginalToDrive():
     last_update_date = None
     LOG_DEBUG(2, "Check cache file")
     if os.path.exists(ADV_CACHE_FILE):
@@ -380,7 +380,7 @@ def UpdateOriginalToDrive(bFullUpdate=False):
     LOG_DEBUG(2, "Write datetime cache file")
     with open(ADV_CACHE_FILE, 'w') as f:
         f.write(datetime.today().isoformat(" "))
-    if bFullUpdate:
+    if False:
         LOG_DEBUG(2, "Full update")
         original_file_paths = Helper_GetFilesFromDir(ADV_ORIGINAL_PATH, ".txt", "adv_")
     elif last_update_date != None:
