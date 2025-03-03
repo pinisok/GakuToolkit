@@ -68,15 +68,17 @@ def Helper_GetFilesFromDirByDate(target_date:str, path:str, suffix:str = None, p
     _ORIGINAL_ROOT = os.getcwd()
     CMDS = f"git rev-list --since='{target_date}' --until='{date.today()}' {branch}"
     commits = subprocess.check_output(CMDS, shell=True, text=True, cwd=path).split("\n")
-    result = []
+    result = {}
     for commit in commits:
         if commit == "": continue
         LOG_DEBUG(3, f"Run commands git diff for commit {commit}~ from '{path}'")
-        result += subprocess.check_output(f"git diff --name-only {commit}~", shell=True, text=True, cwd=path).split("\n")
+        for key in subprocess.check_output(f"git diff --name-only {commit}~", shell=True, text=True, cwd=path).split("\n"):
+            if key == "": continue
+            result[key] = True
     LOG_DEBUG(3, f"Updated file list : {result}")
 
     finds : list[str] = []
-    for relate_path in result:
+    for relate_path in result.keys():
         if relate_path == "" or relate_path == "revision": continue
         file_path = os.path.join(path, relate_path)
         relate_path = os.path.relpath(file_path, os.getcwd())

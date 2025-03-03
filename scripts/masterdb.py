@@ -127,7 +127,6 @@ def XlsxToJson_parallels(paths):
 def XlsxToJson(input_path, output_path):
     error_list = []
     input_dataframe = pd.read_excel(input_path, na_values="", keep_default_na=False, na_filter=False, engine="openpyxl")
-    input_dataframe = input_dataframe.convert_dtypes()
     input_dataframe.fillna("", inplace=True)
     input_records = input_dataframe.to_dict(orient="records")
     data = {}
