@@ -123,13 +123,13 @@ def _internalCsvToDataFrame(read_fp):
     _internalOverrideXlsxColumn(adv_dataframe)
     if len(adv_dataframe.index) < 1:
         raise ValueError("No message")
-    adv_dataframe['text'] = adv_dataframe['text'].replace("\\n", "\n")
+    adv_dataframe['text'] = adv_dataframe['text'].str.replace("\\n", "\n")
     return adv_dataframe
 
-def _internalUpdateDataFrame(new_dataframe, original_fp):
+def _internalUpdateDataFrame(new_dataframe:pd.DataFrame, original_fp):
     orig_dataframe = _internalReadXlsx(original_fp)
     orig_records = orig_dataframe.to_dict(orient='records')
-    new_records = orig_dataframe.to_dict(orient='records')
+    new_records = new_dataframe.to_dict(orient='records')
     bOverride = False
 
     orig_records_length = len(orig_records)
@@ -152,9 +152,9 @@ def _internalUpdateDataFrame(new_dataframe, original_fp):
             new_records[idx]["translated name"] = orig_records[idx]["translated name"]
             new_records[idx]["translated text"] = orig_records[idx]["translated text"]
             if new_records[idx]["text"] != orig_records[idx]["text"]:
-                diff = difflib.ndiff(orig_records[idx]["text"], new_dataframe[idx]["text"])
-                LOG_WARN(4, f"Unmatch text at line {idx} : {float(len(list(diff)) / len(new_dataframe[idx]['text'])):.02f}")
-                LOG_WARN(4, f"'{new_records[idx]['text']}' : '{orig_records[idx]['text']}'")
+                diff = difflib.ndiff(orig_records[idx]["text"], new_records[idx]["text"])
+                LOG_WARN(0, f"Unmatch original text at line {idx} : {float(len(list(diff)) / len(new_records[idx]['text'])):.02f}")
+                LOG_WARN(0, f"'{new_records[idx]['text']}' : '{orig_records[idx]['text']}'")
                 new_records[idx]["comments"] = "원본 문자열이 수정되었습니다. 번역값이 적절한지 확인 후 해당 문구를 삭제해주세요"
         return pd.DataFrame.from_dict(new_records)
     return pd.DataFrame.from_dict(orig_records)
