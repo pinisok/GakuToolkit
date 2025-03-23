@@ -47,6 +47,20 @@ def _internalXlsxDataFrameProcess(dataframe:pd.DataFrame, origin_path:str):
     dataframe.loc[len(dataframe)] = {"id":"info", "name" : origin_path}
     dataframe.loc[len(dataframe)] = {"id":"译者", "name" : "None"}
 
+START_EM_LENGTH = 4
+END_EM_LENGTH = 5
+def _processEMtag(string: str):
+    if len(string) < 1:
+        return string
+    start_idx = string.find("<em>")
+    if start_idx == -1:
+        return string
+    end_idx = string[start_idx:].find("</em>")
+    if end_idx == -1:
+        return string
+    result = string[start_idx+START_EM_LENGTH:start_idx+end_idx].replace(" ", "</em> <em>")
+    return string[:start_idx] + "<em>" + result + "</em>" + _processEMtag(string[start_idx+end_idx+END_EM_LENGTH:])
+
 def _internalXlsxRecordsProcess(records : list[dict]):
     for record in records:
         # id
@@ -76,6 +90,7 @@ def _internalXlsxRecordsProcess(records : list[dict]):
                 
         record["text"] = _encode(record["text"])
         record["translated text"] = _encode(record["translated text"])
+        record["translated text"] = _processEMtag(record["translated text"])
         if len(record["translated text"]) < 1 and record["id"] != "译者" and record["id"] != "info":
             raise Exception(f"Adv 파일 {records.index(record)}번째 줄 번역문 '{record['text']}'이 빈 줄 입니다. 해당 파일을 스킵합니다")
 
