@@ -1,3 +1,5 @@
+
+echo $(date "+%Y-%m-%d %H:%M:%S")
 git submodule update --init --remote --recursive
 
 rm ./res/masterdb/data/*

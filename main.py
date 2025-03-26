@@ -27,7 +27,7 @@ def Convert(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True, bFullUpdat
     if len(ADV_FILE) + len(MASTERDB_FILE) + len(GENERIC_FILE) + len(LOCALIZATION_FILE) > 0:
         LOG_INFO(1, "Write version.txt")
         with open("./output/version.txt", 'w', encoding='utf-8') as f:
-            f.write(datetime.today().isoformat(" "))
+            f.write(datetime.today().strftime("%Y%m%d_%H%M%S"))
     else:
         LOG_INFO(1, "No files updated")
     return (ERR_ADV_FILE, ADV_FILE), (ERR_MASTERDB_FILE, MASTERDB_FILE), (ERR_GENERIC_FILE, GENERIC_FILE), (ERR_LOCALIZATION_FILE, LOCALIZATION_FILE)
