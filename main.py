@@ -118,6 +118,8 @@ if __name__ == "__main__":
         import sys, os
         sys.stdout = open(os.devnull, 'w')
         rclone.logger.addHandler(RichHandler(console=Console(stderr=True)))
+    handler = logging.FileHandler(f"output_python_{(datetime.today().strftime('%Y%m%d_%H%M%S'))}.log")
+    logger.addHandler(handler)
     LOG_INFO(0, "Start scripts")
     if args.convert or args.update:
         CONVERT = False

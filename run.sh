@@ -1,4 +1,4 @@
-
+#!/bin/bash
 echo $(date "+%Y-%m-%d %H:%M:%S")
 git submodule update --init --remote --recursive
 
