@@ -132,7 +132,7 @@ if __name__ == "__main__":
     MASTERDB = True
     GENERIC = True
     LOCALIZATION = True
-    if args.adv or args.masterdb:
+    if args.adv or args.masterdb or args.generic or args.localization:
         ADV = False
         MASTERDB = False
         GENERIC = False
