@@ -627,11 +627,6 @@ serialize_list = [
     ('\r','\\r'),
     ('\t','\\t'),
 ]
-def Serialize(string:str):
-    result = string
-    for obj in serialize_list:
-        result = result.replace(obj[0], obj[1])
-    return result
 
 def Deserialize(string:str):
     result = string
@@ -693,9 +688,9 @@ def WriteXlsx(file_name, input_records):
     output_path = os.path.join(MASTERDB2_DRIVE_PATH, file_name+".xlsx")
     output_dataframe = pd.DataFrame.from_records(input_records)
     writer = pd.ExcelWriter(output_path, engine="xlsxwriter") 
-    output_dataframe.to_excel(writer, index=False, sheet_name="Sheet1")
     output_dataframe.replace(r'\r', r'\\r', regex=True, inplace=True)
     output_dataframe.replace(r'\t', r'\\t', regex=True, inplace=True)
+    output_dataframe.to_excel(writer, index=False, sheet_name="Sheet1")
     workbook = writer.book
     column_format = workbook.add_format({'font_name': 'Calibri', 'align':'left'})
     worksheet = writer.sheets['Sheet1']
@@ -1193,3 +1188,6 @@ def ConvertDriveToOutput(bFullUpdate=False):
                 error_file_list.append((file_name, e))
 
     return error_file_list, converted_file_list
+
+
+UpdateXlsx("ProduceDrink")
