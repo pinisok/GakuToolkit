@@ -685,18 +685,17 @@ def WriteXlsx(file_name, input_records):
     column_format = workbook.add_format({'font_name': 'Calibri', 'align':'left'})
     worksheet = writer.sheets['Sheet1']
 
-    key_size = len(input_records[0].keys()) - 5
-
+    key_size = (len(input_records[0].keys()) - 5) // 2
     id_format = workbook.add_format({'font_name': 'Calibri', 'bold':False, 'text_wrap':True, 'align':'center', 'valign':'top', 'border':1, 'num_format': '@'})
     value_format = workbook.add_format({'font_name': 'Calibri', 'bold':False, 'text_wrap':True, 'align':'left', 'valign':'top', 'border':1, 'num_format': '@'})
     worksheet.set_column(0 ,0, 10, column_format) # IMAGE
-    for idx in range(key_size):
+    for idx in range(1, key_size+1):
         worksheet.set_column((2 * idx) - 1, (2 * idx) - 1,  10, id_format) # KEY ID #
         worksheet.set_column(2 * idx,       2 * idx,        15, value_format) # KEY VALUE #
-    worksheet.set_column(2*key_size - 1,         2*key_size - 1,      12, id_format) # ID
-    worksheet.set_column(2*key_size + 0,         2*key_size + 0,      70, value_format) # 원문
-    worksheet.set_column(2*key_size + 1,         2*key_size + 1,      70, value_format) # 번역
-    worksheet.set_column(2*key_size + 2,         2*key_size + 2,      25, value_format) # 설명
+    worksheet.set_column(2*key_size + 1,         2*key_size + 1,      12, id_format) # ID
+    worksheet.set_column(2*key_size + 2,         2*key_size + 2,      70, value_format) # 원문
+    worksheet.set_column(2*key_size + 3,         2*key_size + 3,      70, value_format) # 번역
+    worksheet.set_column(2*key_size + 4,         2*key_size + 4,      25, value_format) # 설명
  
     writer.close()
 
