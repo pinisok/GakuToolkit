@@ -11,6 +11,21 @@ from . import rclone
 from .helper import *
 from .log import *
 from copy import deepcopy
+import shelve
+
+def DB_save(key, value):
+    with shelve.open('DB.dat') as d:
+        d[key] = value
+
+
+def DB_get(key, default = ""):
+    with shelve.open('DB.dat') as d:
+        if key in d:
+            return d[key]
+        else:
+            return default
+
+
 
 def path_normalize_for_pk(path_str: str) -> str:
     return re.sub(r"\[\d+\]", "", path_str)
@@ -876,6 +891,7 @@ def OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
                             # LOG_WARN(2, f"Original text is not matched '{subobj[idx]}' != '{record['원문']}'")
                             return False
                         subobj[idx] = record["번역"]
+                        DB_save(subobj[idx], record["번역"])
                         return True
                     elif isinstance(subobj[idx], list):
                         if (len(subobj) > 0) and (not isinstance(subobj[0], str)):
@@ -888,6 +904,7 @@ def OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
                                     # LOG_WARN(2, f"Original text is not matched '{original_text}' != '{record['원문']}'")
                                     return False
                                 subobj[idx] = trans_str[len("[LA_F]"):].split("[LA_N_F]")
+                                DB_save(subobj[idx], record["번역"])
                                 return True
                             else:
                                 LOG_WARN(2, f"Except list type but get invalid translate value \"{trans_str}\" at \"{record}\" / data:[{didx}/{data_list[didx]}]")
@@ -905,6 +922,7 @@ def OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
                             # LOG_WARN(2, f"Original text is not matched '{obj[subkey]}' != '{record['원문']}'")
                             return False
                         obj[subkey] = record["번역"]
+                        DB_save(subobj[idx], record["번역"])
                         return True
                     elif isinstance(obj[subkey], list):
                         if (len(obj[subkey]) > 0) and (not isinstance(obj[subkey][0], str)):
@@ -917,6 +935,7 @@ def OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
                                     # LOG_WARN(2, f"Original text is not matched '{original_text}' != '{record['원문']}'")
                                     return False
                                 obj = trans_str[len("[LA_F]"):].split("[LA_N_F]")
+                                DB_save(subobj[idx], record["번역"])
                                 return True
                             else:
                                 LOG_WARN(2, f"Except list but meet invalid translate value \"{trans_str}\" at \"{record}\" / data:[{didx}/{data_list[didx]}]")
@@ -977,7 +996,7 @@ def UpdateXlsx(file_name:str) -> int:
     
     jp_data_records = JsonToRecord(file_name)
 
-    old_kr_data_kv = LoadOldKV(file_name)
+    # old_kr_data_kv = LoadOldKV(file_name)
     
     kr_touched_list = []
     for jp_idx, jp_record in enumerate(jp_data_records):
@@ -1007,7 +1026,7 @@ def UpdateXlsx(file_name:str) -> int:
             kr_target_record = kr_record
         if kr_target_record == None:
             jp_record["설명"] = "추가 : " + UPDATE_TIMESTAMP
-            jp_record["번역"] = old_kr_data_kv.get(jp_record["원문"], "") # TODO : 대용량 지원하는 KV 로 대체
+            jp_record["번역"] = DB_get(jp_record["원문"]) # old_kr_data_kv.get(jp_record["원문"], "") # TODO : 대용량 지원하는 KV 로 대체
             empty_value_counter += 1
             if kr_target_idx == -1:
                 kr_data_records.append(jp_record)
