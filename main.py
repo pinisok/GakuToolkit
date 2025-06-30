@@ -9,7 +9,7 @@ from scripts.log import *
 full_update = False
 CONVERT = True
 UPDATE = True
-USE_MASTERDB2 = False
+USE_MASTERDB2 = True
 
 def Convert(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True, bFullUpdate=False):
     ERR_ADV_FILE = ADV_FILE = ERR_MASTERDB_FILE = MASTERDB_FILE = ERR_GENERIC_FILE = GENERIC_FILE = ERR_LOCALIZATION_FILE = LOCALIZATION_FILE = []
