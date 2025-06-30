@@ -1188,6 +1188,3 @@ def ConvertDriveToOutput(bFullUpdate=False):
                 error_file_list.append((file_name, e))
 
     return error_file_list, converted_file_list
-
-
-UpdateXlsx("ProduceDrink")
