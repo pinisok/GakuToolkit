@@ -921,7 +921,7 @@ def OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
                         if obj[subkey] != record["원문"]:
                             # LOG_WARN(2, f"Original text is not matched '{obj[subkey]}' != '{record['원문']}'")
                             return False
-                        DB_save(obj[idx], record["번역"])
+                        DB_save(obj[subkey], record["번역"])
                         obj[subkey] = record["번역"]
                         return True
                     elif isinstance(obj[subkey], list):
