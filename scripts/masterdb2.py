@@ -714,7 +714,7 @@ def WriteXlsx(file_name, input_records):
  
     writer.close()
 
-def ReadXlsx(file_name) -> dict:
+def ReadXlsx(file_name) -> list:
     input_path = os.path.join(MASTERDB2_DRIVE_PATH, file_name+".xlsx")
     try:
         input_dataframe = pd.read_excel(input_path, na_values="ERROR_NA_VALUE", keep_default_na=False, na_filter=False, engine="openpyxl")
@@ -996,7 +996,7 @@ def UpdateXlsx(file_name:str) -> int:
     
     jp_data_records = JsonToRecord(file_name)
 
-    # old_kr_data_kv = LoadOldKV(file_name)
+    old_kr_data_kv = LoadOldKV(file_name)
     
     kr_touched_list = []
     for jp_idx, jp_record in enumerate(jp_data_records):
@@ -1018,7 +1018,7 @@ def UpdateXlsx(file_name:str) -> int:
                 # LOG_WARN(2, f"Original text mismatch for jp(newer):'{jp_record}' kr(older):'{kr_record}'")
                 kr_target_idx = kr_idx
                 continue
-            kr_touched_list.append(kr_idx)
+            kr_record["_GAKU_TOUCHED"] = True
             if kr_target_record != None:
                 # LOG_WARN(2, f"Find duplicate key match for jp:'{jp_record}' kr1:'{kr_target_record}' kr2:'{kr_record}'")
                 continue
@@ -1026,19 +1026,25 @@ def UpdateXlsx(file_name:str) -> int:
             kr_target_record = kr_record
         if kr_target_record == None:
             jp_record["설명"] = "추가 : " + UPDATE_TIMESTAMP
-            jp_record["번역"] = DB_get(jp_record["원문"]) # old_kr_data_kv.get(jp_record["원문"], "") # TODO : 대용량 지원하는 KV 로 대체
+            jp_record["번역"] = old_kr_data_kv.get(jp_record["원문"], "") # TODO : 대용량 지원하는 KV 로 대체 # DB_get(jp_record["원문"])
             empty_value_counter += 1
             if kr_target_idx == -1:
+                jp_record["_GAKU_TOUCHED"] = True
                 kr_data_records.append(jp_record)
             else:
+                jp_record["_GAKU_TOUCHED"] = True
                 kr_data_records.insert(kr_target_idx+1, jp_record)
                 LOG_WARN(2, f"Find new record inside on {kr_target_idx+1} : '{jp_record}' at '{kr_data_records[kr_target_idx]}'")
 
     # Collect unused data
-    kr_unused_list = [idx for idx in range(kr_data_records_size) if idx not in kr_touched_list]
-    for kr_idx in kr_unused_list:
-        LOG_WARN(2, f"Unused record[{kr_idx}] : {kr_data_records[kr_idx]}")
-        kr_data_records[kr_idx]["설명"] = "미사용 : " + UPDATE_TIMESTAMP
+    kr_unused_list = [(idx,record) for idx, record in enumerate(kr_data_records) if "_GAKU_TOUCHED" not in record]
+    for kr_idx, record in kr_unused_list:
+        LOG_WARN(2, f"Unused record[{kr_idx}] : {record}")
+        # record["설명"] = "미사용 : " + UPDATE_TIMESTAMP
+        kr_data_records.remove(record)
+    for record in kr_data_records:
+        if "_GAKU_TOUCHED" in record:
+            record.pop("_GAKU_TOUCHED")
     WriteXlsx(file_name, kr_data_records)
     return empty_value_counter
 
