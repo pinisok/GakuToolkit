@@ -826,9 +826,9 @@ def ReadJson(file_name):
     return json_data
 
 def WriteJson(file_name, obj):
-    with open(MASTERDB_OUTPUT_PATH+"/"+file_name+".json", encoding="utf-8") as f:
-        json_data = json.load(f)
-    return json_data
+    with open(MASTERDB_OUTPUT_PATH+"/"+file_name+".json", "w", encoding="utf-8") as f:
+        json.dumps(obj, f)
+    return
 
 def JsonToRecord(file_name) -> list[dict]:
     datas:list[dict] = ReadJson(file_name)["data"]
