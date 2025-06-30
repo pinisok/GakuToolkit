@@ -3,11 +3,13 @@ from datetime import datetime
 import argparse
 
 from scripts import rclone, adv, masterdb, generic, localization
+from scripts import masterdb2
 from scripts.log import *
 
 full_update = False
 CONVERT = True
 UPDATE = True
+USE_MASTERDB2 = False
 
 def Convert(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True, bFullUpdate=False):
     ERR_ADV_FILE = ADV_FILE = ERR_MASTERDB_FILE = MASTERDB_FILE = ERR_GENERIC_FILE = GENERIC_FILE = ERR_LOCALIZATION_FILE = LOCALIZATION_FILE = []
@@ -16,7 +18,10 @@ def Convert(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True, bFullUpdat
         ERR_ADV_FILE, ADV_FILE = adv.ConvertDriveToOutput(bFullUpdate)
     if MASTERDB:
         LOG_INFO(1, "Converting MasterDB")
-        ERR_MASTERDB_FILE, MASTERDB_FILE = masterdb.ConvertDriveToOutput(bFullUpdate)
+        if not USE_MASTERDB2:
+            ERR_MASTERDB_FILE, MASTERDB_FILE = masterdb.ConvertDriveToOutput(bFullUpdate)
+        else:
+            ERR_MASTERDB_FILE, MASTERDB_FILE = masterdb2.ConvertDriveToOutput(bFullUpdate)
     if GENERIC:
         LOG_INFO(1, "Converting Generic")
         ERR_GENERIC_FILE, GENERIC_FILE = generic.ConvertDriveToOutput(bFullUpdate)
@@ -39,7 +44,10 @@ def Update(ADV=True, MASTERDB=True, bFullUpdate=False):
         ADV_FILE = adv.UpdateOriginalToDrive()
     if MASTERDB:
         LOG_INFO(1, "Updating MasterDB")
-        MASTERDB_FILE = masterdb.UpdateOriginalToDrive()
+        if not USE_MASTERDB2:
+            MASTERDB_FILE = masterdb.UpdateOriginalToDrive()
+        else:
+            MASTERDB_FILE = masterdb2.UpdateOriginalToDrive()
 
     return ADV_FILE, MASTERDB_FILE
     
@@ -108,6 +116,7 @@ if __name__ == "__main__":
     parser.add_argument('--masterdb', action='store_true')
     parser.add_argument('--generic', action='store_true')
     parser.add_argument('--localization', action='store_true')
+    parser.add_argument('--masterdb2', action='store_true')
     args = parser.parse_args()
     if args.fullupdate:
         full_update = True
@@ -145,6 +154,9 @@ if __name__ == "__main__":
             GENERIC = True
         if args.localization:
             LOCALIZATION = True
+    if args.masterdb2:
+        USE_MASTERDB2 = True
+
 
 
     main(ADV, MASTERDB, GENERIC, LOCALIZATION)
