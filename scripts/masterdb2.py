@@ -693,10 +693,10 @@ def WriteXlsx(file_name, input_records):
     for idx in range(key_size):
         worksheet.set_column((2 * idx) - 1, (2 * idx) - 1,  10, id_format) # KEY ID #
         worksheet.set_column(2 * idx,       2 * idx,        15, value_format) # KEY VALUE #
-    worksheet.set_column(2*key_size + 0,         2*key_size + 0,      12, id_format) # ID
-    worksheet.set_column(2*key_size + 1,         2*key_size + 1,      70, value_format) # 원문
-    worksheet.set_column(2*key_size + 2,         2*key_size + 2,      70, value_format) # 번역
-    worksheet.set_column(2*key_size + 3,         2*key_size + 3,      25, value_format) # 설명
+    worksheet.set_column(2*key_size - 1,         2*key_size - 1,      12, id_format) # ID
+    worksheet.set_column(2*key_size + 0,         2*key_size + 0,      70, value_format) # 원문
+    worksheet.set_column(2*key_size + 1,         2*key_size + 1,      70, value_format) # 번역
+    worksheet.set_column(2*key_size + 2,         2*key_size + 2,      25, value_format) # 설명
  
     writer.close()
 
