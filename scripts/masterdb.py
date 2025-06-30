@@ -40,8 +40,10 @@ def convert_yaml_types(obj):
         _save_func(data, file[:-5])
         # print(f"文件: {file_path}")
         # print(f"类型: {type(data)}\n")
+        return True
     except Exception as e:
-        print(f"加载文件 {file_path} 时出错: {e}")
+        LOG_ERROR(0,f"加载文件 {file_path} 时出错: {e}")
+        return False
 
 def convert_yaml_types_in_parallel(exception_list = None):
     if GIT_MASTERDB_PATH+"/scripts" not in sys.path:
