@@ -890,8 +890,8 @@ def OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
                         if subobj[idx] != record["원문"]:
                             # LOG_WARN(2, f"Original text is not matched '{subobj[idx]}' != '{record['원문']}'")
                             return False
-                        subobj[idx] = record["번역"]
                         DB_save(subobj[idx], record["번역"])
+                        subobj[idx] = record["번역"]
                         return True
                     elif isinstance(subobj[idx], list):
                         if (len(subobj) > 0) and (not isinstance(subobj[0], str)):
@@ -903,8 +903,8 @@ def OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
                                 if original_text != record["원문"]:
                                     # LOG_WARN(2, f"Original text is not matched '{original_text}' != '{record['원문']}'")
                                     return False
-                                subobj[idx] = trans_str[len("[LA_F]"):].split("[LA_N_F]")
                                 DB_save(subobj[idx], record["번역"])
+                                subobj[idx] = trans_str[len("[LA_F]"):].split("[LA_N_F]")
                                 return True
                             else:
                                 LOG_WARN(2, f"Except list type but get invalid translate value \"{trans_str}\" at \"{record}\" / data:[{didx}/{data_list[didx]}]")
@@ -921,8 +921,8 @@ def OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
                         if obj[subkey] != record["원문"]:
                             # LOG_WARN(2, f"Original text is not matched '{obj[subkey]}' != '{record['원문']}'")
                             return False
+                        DB_save(obj[idx], record["번역"])
                         obj[subkey] = record["번역"]
-                        DB_save(subobj[idx], record["번역"])
                         return True
                     elif isinstance(obj[subkey], list):
                         if (len(obj[subkey]) > 0) and (not isinstance(obj[subkey][0], str)):
@@ -934,8 +934,8 @@ def OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
                                 if original_text != record["원문"]:
                                     # LOG_WARN(2, f"Original text is not matched '{original_text}' != '{record['원문']}'")
                                     return False
+                                DB_save(original_text, record["번역"])
                                 obj = trans_str[len("[LA_F]"):].split("[LA_N_F]")
-                                DB_save(subobj[idx], record["번역"])
                                 return True
                             else:
                                 LOG_WARN(2, f"Except list but meet invalid translate value \"{trans_str}\" at \"{record}\" / data:[{didx}/{data_list[didx]}]")
