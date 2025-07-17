@@ -1027,6 +1027,8 @@ def UpdateXlsx(file_name:str) -> int:
             empty_value_counter += 1
             if kr_target_idx == -1:
                 jp_record["_GAKU_TOUCHED"] = True
+                if jp_record["번역"] == "":
+                    jp_record["번역"] = DB_get(jp_record["원문"])
                 kr_data_records.append(jp_record)
             else:
                 jp_record["_GAKU_TOUCHED"] = True
