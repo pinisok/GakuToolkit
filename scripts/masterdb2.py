@@ -1021,7 +1021,9 @@ def UpdateXlsx(file_name:str) -> int:
             kr_target_record = kr_record
         if kr_target_record == None:
             jp_record["설명"] = "추가 : " + UPDATE_TIMESTAMP
-            jp_record["번역"] = old_kr_data_kv.get(jp_record["원문"], "") # TODO : 대용량 지원하는 KV 로 대체 # DB_get(jp_record["원문"])
+            jp_record["번역"] = DB_get(jp_record["원문"])
+            if jp_record["번역"] == "":
+                jp_record["번역"] = old_kr_data_kv.get(jp_record["원문"], "") 
             empty_value_counter += 1
             if kr_target_idx == -1:
                 jp_record["_GAKU_TOUCHED"] = True
