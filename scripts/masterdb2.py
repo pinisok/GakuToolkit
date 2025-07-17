@@ -1027,14 +1027,11 @@ def UpdateXlsx(file_name:str) -> int:
             empty_value_counter += 1
             if kr_target_idx == -1:
                 jp_record["_GAKU_TOUCHED"] = True
-                if jp_record["번역"] == "":
-                    jp_record["번역"] = DB_get(jp_record["원문"])
                 kr_data_records.append(jp_record)
             else:
                 jp_record["_GAKU_TOUCHED"] = True
                 kr_data_records.insert(kr_target_idx+1, jp_record)
                 LOG_WARN(2, f"Find new record inside on {kr_target_idx+1} : '{jp_record}' at '{kr_data_records[kr_target_idx]}'")
-
     # Collect unused data
     kr_unused_list = [(idx,record) for idx, record in enumerate(kr_data_records) if "_GAKU_TOUCHED" not in record]
     for kr_idx, record in kr_unused_list:
@@ -1044,6 +1041,10 @@ def UpdateXlsx(file_name:str) -> int:
     for record in kr_data_records:
         if "_GAKU_TOUCHED" in record:
             record.pop("_GAKU_TOUCHED")
+        if record["번역"] == "":
+            record["번역"] = DB_get(record["원문"])
+            LOG_WARN(2, f"Find old untranslated record and use db : {record}")
+
     WriteXlsx(file_name, kr_data_records)
     return empty_value_counter
 
