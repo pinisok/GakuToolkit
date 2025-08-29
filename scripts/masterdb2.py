@@ -12,6 +12,7 @@ from .helper import *
 from .log import *
 from copy import deepcopy
 import shelve
+import re
 
 def DB_save(key, value):
     with shelve.open('DB.dat') as d:
@@ -642,7 +643,10 @@ def convert_yaml_types(obj):
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         # content = content.replace('\t', '    ')  # 替换制表符
-        content = content.replace(": \t", ": \"\t\"")  # 替换制表符
+        # content = content.replace(": \t", ": \"\t\"")  # 替换制表符
+        content = re.sub(r': (\t.*)', r': "\1"', content)
+        content = content.replace("|\n", "|+\n") # Fix literal strings newline chomping
+
         # 解析 YAML 内容
         # data = yaml.safe_load(content)
         data = yaml.load(content, _CustomLoader)
