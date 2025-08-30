@@ -75,12 +75,12 @@ def _update_summary(NAME, ARR):
             if fn[0] == "+":
                 LOG_INFO(2, f"Add '{fn[1]}' file to remote")
 def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
-    if CONVERT:
-        LOG_INFO(0, "Start convert")
-        C_ADV_FILE, C_MASTERDB_FILE, C_GENERIC_FILE, C_LOCALIZATION_FILE = Convert(ADV, MASTERDB, GENERIC, LOCALIZATION, full_update)
     if UPDATE:
         LOG_INFO(0, "Start update")
         U_ADV_FILE, U_MASTERDB_FILE = Update(ADV, MASTERDB, full_update)
+    if CONVERT:
+        LOG_INFO(0, "Start convert")
+        C_ADV_FILE, C_MASTERDB_FILE, C_GENERIC_FILE, C_LOCALIZATION_FILE = Convert(ADV, MASTERDB, GENERIC, LOCALIZATION, full_update)
     
     if CONVERT:
         if C_ADV_FILE != None and len(C_ADV_FILE[0]) + len(C_ADV_FILE[1]) + len(C_MASTERDB_FILE[0]) + len(C_MASTERDB_FILE[1]) + len(C_GENERIC_FILE) + len(C_LOCALIZATION_FILE) > 0:
