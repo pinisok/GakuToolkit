@@ -7,3 +7,5 @@ res/drive
 
 DB.dat
 api.json
+
+output_*.log
