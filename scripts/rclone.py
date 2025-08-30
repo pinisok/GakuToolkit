@@ -94,6 +94,11 @@ def check(source, destination):
         if obj[0] != '=':
             return_result.append([obj[0], os.path.relpath(os.path.join(destination, obj[1]), destination)])
     return return_result
+
+def link(dest):
+    result = rclone.link(dest, args=["--drive-shared-with-me"])
+    return result
+
 def init():
     if not rclone.is_installed():
         raise Exception("Rclone is not installed")
