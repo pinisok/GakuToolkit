@@ -1,6 +1,6 @@
 
 from datetime import datetime
-import argparse
+import argparse, io
 
 from scripts import rclone, adv, masterdb, generic, localization
 from scripts import masterdb2
@@ -51,7 +51,12 @@ def Update(ADV=True, MASTERDB=True, bFullUpdate=False):
 
     return ADV_FILE, MASTERDB_FILE
     
-    
+def getDriveUrl(file):
+    try:
+        link = rclone.link(os.path.join(file[1], file[2])).replace("https://drive.google.com/open?id=", "https://docs.google.com/spreadsheets/d/")
+        return f"[{file[1]}]({link})"
+    finally:
+        return file[1]
 
 def _convert_summary(NAME, ARR):
     if len(ARR[0]) + len(ARR[1]) > 0:
@@ -71,9 +76,13 @@ def _update_summary(NAME, ARR):
         ARR.sort()
         for fn in ARR:
             if fn[0] == "*":
-                LOG_INFO(2, f"Update '{fn[1]}' file to remote")
+                LOG_INFO(2, f"Update '{getDriveUrl(fn)}' file to remote")
             if fn[0] == "+":
-                LOG_INFO(2, f"Add '{fn[1]}' file to remote")
+                LOG_INFO(2, f"Add '{getDriveUrl(fn)}' file to remote")
+class MemoryBuffer():
+    result = ""
+    def handle(record):
+        1
 def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
     if UPDATE:
         LOG_INFO(0, "Start update")
@@ -81,7 +90,10 @@ def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
     if CONVERT:
         LOG_INFO(0, "Start convert")
         C_ADV_FILE, C_MASTERDB_FILE, C_GENERIC_FILE, C_LOCALIZATION_FILE = Convert(ADV, MASTERDB, GENERIC, LOCALIZATION, full_update)
-    
+
+    logStream = io.StringIO()
+    logHandler = logging.StreamHandler(logStream)
+    AddLogHandler(logHandler)
     if CONVERT:
         if C_ADV_FILE != None and len(C_ADV_FILE[0]) + len(C_ADV_FILE[1]) + len(C_MASTERDB_FILE[0]) + len(C_MASTERDB_FILE[1]) + len(C_GENERIC_FILE) + len(C_LOCALIZATION_FILE) > 0:
             LOG_INFO(0, "---------------- Summary of converted files ----------------")
@@ -104,6 +116,12 @@ def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
             LOG_INFO(0, "----------------------------------------------------------")
         else:
             LOG_INFO(0, "No files updated")
+    import scripts.gspread
+    scripts.gspread.load()
+    scripts.gspread.log(logStream.getvalue())
+    logHandler.close()
+    logStream.close()
+    
 
 
 if __name__ == "__main__":
