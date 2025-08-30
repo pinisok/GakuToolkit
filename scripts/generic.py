@@ -58,7 +58,7 @@ def XlsxToJson(input_path, output_path):
             if not "text" in input_record_keys or not type(input_record['text']) == str:
                 continue
             if not "trans" in input_record_keys or not type(input_record['trans']) == str or input_record['trans'] == "":
-                LOG_WARN(3, f"{f}의 {input_record['text']}의 번역 값이 존재하지 않습니다. 넘어갑니다.")
+                LOG_WARN(3, f"{input_record}의 {input_record['text']}의 번역 값이 존재하지 않습니다. 넘어갑니다.")
                 continue
             if input_record["trans"].startswith("'"):
                 data[Deserialize(input_record["text"])] = Deserialize(input_record["trans"][1:])
