@@ -4,3 +4,6 @@ scripts/__pycache__
 cache
 
 res/drive
+
+DB.dat
+api.json
