@@ -117,7 +117,6 @@ def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
         else:
             LOG_INFO(0, "No files updated")
     import scripts.gspread
-    scripts.gspread.load()
     scripts.gspread.log(logStream.getvalue())
     logHandler.close()
     logStream.close()

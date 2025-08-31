@@ -5,3 +5,5 @@ openpyxl>=3.1.5
 xlsxwriter
 tqdm
 PyYAML
+gspread==6.2.1
+gspread_formatting==1.2.1
