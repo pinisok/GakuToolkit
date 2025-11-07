@@ -55,6 +55,8 @@ def getDriveUrl(file):
     try:
         link = rclone.link(os.path.join(file[1], file[2])).replace("https://drive.google.com/open?id=", "https://docs.google.com/spreadsheets/d/")
         return f"[{file[1]}]({link})"
+    except e:
+        LOG_INFO(1, f"{e}")
     finally:
         return file[1]
 
@@ -64,11 +66,11 @@ def _convert_summary(NAME, ARR):
         if len(ARR[0]) > 0:
             ARR[0].sort(key= lambda arr: arr[1])
             for fn in ARR[0]:
-                LOG_INFO(2, f"Error during convert {fn[1]} : {fn[0]}")
+                LOG_INFO(2, f"변환 중 오류 {fn[1]} : {fn[0]}")
         if len(ARR[1]) > 0:
             ARR[1].sort()
             for fn in ARR[1]:
-                LOG_INFO(2, f"Convert {fn} to output")
+                LOG_INFO(2, f"{fn} 번역 갱신")
 
 def _update_summary(NAME, ARR):
     if len(ARR) > 0:
@@ -76,9 +78,9 @@ def _update_summary(NAME, ARR):
         ARR.sort()
         for fn in ARR:
             if fn[0] == "*":
-                LOG_INFO(2, f"Update '{getDriveUrl(fn)}' file to remote")
+                LOG_INFO(2, f"업데이트 : '{getDriveUrl(fn)}'")
             if fn[0] == "+":
-                LOG_INFO(2, f"Add '{getDriveUrl(fn)}' file to remote")
+                LOG_INFO(2, f"추가 : '{getDriveUrl(fn)}'")
 class MemoryBuffer():
     result = ""
     def handle(record):
@@ -94,9 +96,19 @@ def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
     logStream = io.StringIO()
     logHandler = logging.StreamHandler(logStream)
     AddLogHandler(logHandler)
+    if UPDATE:
+        if U_ADV_FILE != None and len(U_ADV_FILE) + len(U_MASTERDB_FILE) > 0:
+            LOG_INFO(0, "---------------- 업데이트된 파일 요약 ----------------")
+
+            _update_summary("ADV", U_ADV_FILE)
+            _update_summary("MASTERDB", U_MASTERDB_FILE)
+
+            LOG_INFO(0, "----------------------------------------------------------")
+        else:
+            LOG_INFO(0, "No files updated")
     if CONVERT:
         if C_ADV_FILE != None and len(C_ADV_FILE[0]) + len(C_ADV_FILE[1]) + len(C_MASTERDB_FILE[0]) + len(C_MASTERDB_FILE[1]) + len(C_GENERIC_FILE) + len(C_LOCALIZATION_FILE) > 0:
-            LOG_INFO(0, "---------------- Summary of converted files ----------------")
+            LOG_INFO(0, "---------------- 번역 갱신된 파일 요약 ----------------")
             
             _convert_summary("ADV", C_ADV_FILE)
             _convert_summary("MASTERDB", C_MASTERDB_FILE)
@@ -106,16 +118,6 @@ def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
             LOG_INFO(0, "----------------------------------------------------------")
         else:
             LOG_INFO(0, "No files converted")
-    if UPDATE:
-        if U_ADV_FILE != None and len(U_ADV_FILE) + len(U_MASTERDB_FILE) > 0:
-            LOG_INFO(0, "---------------- Summary of updated files ----------------")
-
-            _update_summary("ADV", U_ADV_FILE)
-            _update_summary("MASTERDB", U_MASTERDB_FILE)
-
-            LOG_INFO(0, "----------------------------------------------------------")
-        else:
-            LOG_INFO(0, "No files updated")
     import scripts.gspread
     scripts.gspread.log(logStream.getvalue())
     logHandler.close()
