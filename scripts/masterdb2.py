@@ -995,7 +995,11 @@ def UpdateXlsx(file_name:str) -> int:
     
     jp_data_records = JsonToRecord(file_name)
 
-    old_kr_data_kv = LoadOldKV(file_name)
+    old_kr_data_kv = {}
+    try:
+        old_kr_data_kv = LoadOldKV(file_name)
+    except FileNotFoundError as e:
+        old_kr_data_kv = {}
     
     kr_touched_list = []
     for jp_idx, jp_record in enumerate(jp_data_records):
