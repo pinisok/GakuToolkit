@@ -91,12 +91,15 @@ def _update_summary(NAME, ARR, warnings=None):
                 LOG_INFO(2, f"업데이트 : '{getDriveUrl(fn)}'")
             if fn[0] == "+":
                 LOG_INFO(2, f"추가 : '{getDriveUrl(fn)}'")
-            # 해당 파일의 경고 출력
+            # 해당 파일의 경고 출력 (파일당 최대 5건, 초과 시 요약)
+            MAX_WARNINGS_PER_FILE = 5
             file_path = fn[1] if len(fn) > 1 else ""
             for wkey, wlist in warnings.items():
                 if wkey in file_path:
-                    for w in wlist:
+                    for w in wlist[:MAX_WARNINGS_PER_FILE]:
                         LOG_INFO(3, f"⚠ {w}")
+                    if len(wlist) > MAX_WARNINGS_PER_FILE:
+                        LOG_INFO(3, f"⚠ ... 외 {len(wlist) - MAX_WARNINGS_PER_FILE}건")
 def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
     from scripts import sync
 

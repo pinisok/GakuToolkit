@@ -252,6 +252,22 @@ class TestUpdateSummary:
         assert any("업데이트" in m for m in messages)
         assert not any("⚠" in m for m in messages)
 
+    def test_excessive_warnings_capped(self, caplog):
+        """More than 5 warnings per file should be capped with summary."""
+        from main import _update_summary
+
+        arr = [["*", "cidol/adv_test.xlsx"]]
+        warnings = {"adv_test": [f"원문 불일치 at line {i}" for i in range(20)]}
+
+        with caplog.at_level(logging.INFO, logger="GakuToolkit"):
+            _update_summary("ADV", arr, warnings)
+
+        messages = [r.message for r in caplog.records]
+        warning_lines = [m for m in messages if "⚠" in m]
+        # 5 individual + 1 "외 15건" = 6
+        assert len(warning_lines) == 6
+        assert any("외 15건" in m for m in messages)
+
 
 # ============================================================
 # main() Phase execution
