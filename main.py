@@ -1,6 +1,6 @@
 
 from datetime import datetime
-import argparse, io
+import argparse, io, os
 
 from scripts import rclone, adv, masterdb, generic, localization
 from scripts import masterdb2
@@ -11,23 +11,36 @@ CONVERT = True
 UPDATE = True
 USE_MASTERDB2 = True
 
-def Convert(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True, bFullUpdate=False):
-    ERR_ADV_FILE = ADV_FILE = ERR_MASTERDB_FILE = MASTERDB_FILE = ERR_GENERIC_FILE = GENERIC_FILE = ERR_LOCALIZATION_FILE = LOCALIZATION_FILE = []
+def Convert(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True, bFullUpdate=False, changed_files=None):
+    if changed_files is None:
+        changed_files = {}
+    ERR_ADV_FILE = []
+    ADV_FILE = []
+    ERR_MASTERDB_FILE = []
+    MASTERDB_FILE = []
+    ERR_GENERIC_FILE = []
+    GENERIC_FILE = []
+    ERR_LOCALIZATION_FILE = []
+    LOCALIZATION_FILE = []
     if ADV:
         LOG_INFO(1, "Converting ADV")
-        ERR_ADV_FILE, ADV_FILE = adv.ConvertDriveToOutput(bFullUpdate)
+        adv_files = changed_files.get("adv")
+        ERR_ADV_FILE, ADV_FILE = adv.ConvertDriveToOutput(adv_files, bFullUpdate)
     if MASTERDB:
         LOG_INFO(1, "Converting MasterDB")
+        mdb_files = changed_files.get("masterdb")
         if not USE_MASTERDB2:
             ERR_MASTERDB_FILE, MASTERDB_FILE = masterdb.ConvertDriveToOutput(bFullUpdate)
         else:
-            ERR_MASTERDB_FILE, MASTERDB_FILE = masterdb2.ConvertDriveToOutput(bFullUpdate)
+            ERR_MASTERDB_FILE, MASTERDB_FILE = masterdb2.ConvertDriveToOutput(mdb_files, bFullUpdate)
     if GENERIC:
         LOG_INFO(1, "Converting Generic")
-        ERR_GENERIC_FILE, GENERIC_FILE = generic.ConvertDriveToOutput(bFullUpdate)
+        gen_files = changed_files.get("generic")
+        ERR_GENERIC_FILE, GENERIC_FILE = generic.ConvertDriveToOutput(gen_files, bFullUpdate)
     if LOCALIZATION:
         LOG_INFO(1, "Converting Localization")
-        ERR_LOCALIZATION_FILE, LOCALIZATION_FILE = localization.ConvertDriveToOutput(bFullUpdate)
+        loc_files = changed_files.get("localization")
+        ERR_LOCALIZATION_FILE, LOCALIZATION_FILE = localization.ConvertDriveToOutput(loc_files, bFullUpdate)
 
     if len(ADV_FILE) + len(MASTERDB_FILE) + len(GENERIC_FILE) + len(LOCALIZATION_FILE) > 0:
         LOG_INFO(1, "Write version.txt")
@@ -38,7 +51,8 @@ def Convert(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True, bFullUpdat
     return (ERR_ADV_FILE, ADV_FILE), (ERR_MASTERDB_FILE, MASTERDB_FILE), (ERR_GENERIC_FILE, GENERIC_FILE), (ERR_LOCALIZATION_FILE, LOCALIZATION_FILE)
 
 def Update(ADV=True, MASTERDB=True, bFullUpdate=False):
-    ADV_FILE = MASTERDB_FILE = []
+    ADV_FILE = []
+    MASTERDB_FILE = []
     if ADV:
         LOG_INFO(1, "Updating ADV")
         ADV_FILE = adv.UpdateOriginalToDrive()
@@ -55,9 +69,8 @@ def getDriveUrl(file):
     try:
         link = rclone.link(os.path.join(file[1], file[2])).replace("https://drive.google.com/open?id=", "https://docs.google.com/spreadsheets/d/")
         return f"[{file[1]}]({link})"
-    except e:
+    except Exception as e:
         LOG_INFO(1, f"{e}")
-    finally:
         return file[1]
 
 def _convert_summary(NAME, ARR):
@@ -81,47 +94,66 @@ def _update_summary(NAME, ARR):
                 LOG_INFO(2, f"업데이트 : '{getDriveUrl(fn)}'")
             if fn[0] == "+":
                 LOG_INFO(2, f"추가 : '{getDriveUrl(fn)}'")
-class MemoryBuffer():
-    result = ""
-    def handle(record):
-        1
 def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
-    if UPDATE:
-        LOG_INFO(0, "Start update")
-        U_ADV_FILE, U_MASTERDB_FILE = Update(ADV, MASTERDB, full_update)
-    if CONVERT:
-        LOG_INFO(0, "Start convert")
-        C_ADV_FILE, C_MASTERDB_FILE, C_GENERIC_FILE, C_LOCALIZATION_FILE = Convert(ADV, MASTERDB, GENERIC, LOCALIZATION, full_update)
+    from scripts import sync
 
+    # Phase 0: Download from Google Drive
+    LOG_INFO(0, "Phase 0: Download from Drive")
+    changed_files = sync.download_all(full_update, ADV, MASTERDB, GENERIC, LOCALIZATION)
+
+    # Phase 1: Convert (local drive → output)
+    if CONVERT:
+        LOG_INFO(0, "Phase 1: Convert")
+        C_ADV_FILE, C_MASTERDB_FILE, C_GENERIC_FILE, C_LOCALIZATION_FILE = Convert(ADV, MASTERDB, GENERIC, LOCALIZATION, full_update, changed_files)
+
+    # Phase 2: Update (submodule → local drive)
+    # Phase 3: Upload to Google Drive
+    U_UPLOAD_ADV = []
+    U_UPLOAD_MASTERDB = []
+    if UPDATE:
+        LOG_INFO(0, "Phase 2: Update")
+        Update(ADV, MASTERDB, full_update)
+
+        LOG_INFO(0, "Phase 3: Upload to Drive")
+        U_UPLOAD_ADV, U_UPLOAD_MASTERDB = sync.upload_all(ADV, MASTERDB)
+
+    has_changes = False
     logStream = io.StringIO()
     logHandler = logging.StreamHandler(logStream)
     AddLogHandler(logHandler)
     if UPDATE:
-        if U_ADV_FILE != None and len(U_ADV_FILE) + len(U_MASTERDB_FILE) > 0:
+        if len(U_UPLOAD_ADV) + len(U_UPLOAD_MASTERDB) > 0:
+            has_changes = True
             LOG_INFO(0, "---------------- 업데이트된 파일 요약 ----------------")
 
-            _update_summary("ADV", U_ADV_FILE)
-            _update_summary("MASTERDB", U_MASTERDB_FILE)
+            _update_summary("ADV", U_UPLOAD_ADV)
+            _update_summary("MASTERDB", U_UPLOAD_MASTERDB)
 
             LOG_INFO(0, "----------------------------------------------------------")
         else:
             LOG_INFO(0, "No files updated")
     if CONVERT:
-        if C_ADV_FILE != None and len(C_ADV_FILE[0]) + len(C_ADV_FILE[1]) + len(C_MASTERDB_FILE[0]) + len(C_MASTERDB_FILE[1]) + len(C_GENERIC_FILE) + len(C_LOCALIZATION_FILE) > 0:
+        if len(C_ADV_FILE[0]) + len(C_ADV_FILE[1]) + len(C_MASTERDB_FILE[0]) + len(C_MASTERDB_FILE[1]) + len(C_GENERIC_FILE[0]) + len(C_GENERIC_FILE[1]) + len(C_LOCALIZATION_FILE[0]) + len(C_LOCALIZATION_FILE[1]) > 0:
+            has_changes = True
             LOG_INFO(0, "---------------- 번역 갱신된 파일 요약 ----------------")
-            
+
             _convert_summary("ADV", C_ADV_FILE)
             _convert_summary("MASTERDB", C_MASTERDB_FILE)
             _convert_summary("GENERIC", C_GENERIC_FILE)
             _convert_summary("LOCALIZATION", C_LOCALIZATION_FILE)
-            
+
             LOG_INFO(0, "----------------------------------------------------------")
         else:
             LOG_INFO(0, "No files converted")
-    import scripts.gspread
-    scripts.gspread.log(logStream.getvalue())
+    log_content = logStream.getvalue()
     logHandler.close()
     logStream.close()
+    if has_changes:
+        try:
+            import scripts.gspread
+            scripts.gspread.log(log_content)
+        except Exception as e:
+            LOG_ERROR(0, f"Failed to log to Google Sheets: {e}")
     
 
 

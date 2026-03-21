@@ -7,7 +7,6 @@ import openpyxl
 import xlsxwriter
 
 from .helper import *
-from . import rclone
 from .log import *
 """
 Converter Helper
@@ -98,24 +97,12 @@ def UpdateOriginalToDrive(bFullUpdate = False):
 
 # 번역 수정사항 반영
 # Google Drive > GakumasTranslationDataKor
-def ConvertDriveToOutput(bFullUpdate=False):
-    if bFullUpdate:
-        LOG_DEBUG(2, "Try Full Update")
-        rclone.copy(GENERIC_REMOTE_LYRICS_PATH, GENERIC_DRIVE_LYRICS_PATH)
+def ConvertDriveToOutput(drive_file_paths=None, bFullUpdate=False):
+    if drive_file_paths is None:
+        LOG_DEBUG(2, "No file list provided, scanning local drive")
         drive_file_paths = Helper_GetFilesFromDir(GENERIC_DRIVE_LYRICS_PATH, ".xlsx")
         for file in GENERIC_FILE_LIST:
-            rclone.copy(GENERIC_REMOTE_PATH+file, GENERIC_DRIVE_PATH)
             drive_file_paths += [(GENERIC_DRIVE_PATH+file, file, os.path.basename(file))]
-    else:
-        LOG_DEBUG(2, "Check updated files")
-        check_result = rclone.check(GENERIC_REMOTE_LYRICS_PATH, GENERIC_DRIVE_LYRICS_PATH)
-        drive_file_paths = Helper_GetFilesFromDirByCheck(check_result, GENERIC_DRIVE_LYRICS_PATH, ".xlsx")
-        rclone.copy(GENERIC_REMOTE_LYRICS_PATH, GENERIC_DRIVE_LYRICS_PATH)
-        for file in GENERIC_FILE_LIST:
-            check_result = rclone.check(GENERIC_REMOTE_PATH+file, GENERIC_DRIVE_PATH)
-            if len(check_result) > 0:
-                rclone.copy(GENERIC_REMOTE_PATH+file, GENERIC_DRIVE_PATH)
-                drive_file_paths += [(GENERIC_DRIVE_PATH+file, file, os.path.basename(file))]
 
     if len(drive_file_paths) <= 0:
         LOG_INFO(2, "Generic is not updated, skip")

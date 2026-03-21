@@ -10,7 +10,6 @@ import openpyxl
 import xlsxwriter
 
 from .helper import *
-from . import rclone
 from .log import *
 
 def _internalOverrideXlsxColumn(dataframe):
@@ -307,9 +306,9 @@ def XlsxToTxt_parallels(obj):
     return error_file_list, converted_file_list
 
 def XlsxToTxt(input_path, write_path, original_path):
-    input_fp = open(input_path, "rb")
-    csvIO = StringIO()
-    XlsxToCsv(input_fp, csvIO, os.path.basename(write_path))
+    with open(input_path, "rb") as input_fp:
+        csvIO = StringIO()
+        XlsxToCsv(input_fp, csvIO, os.path.basename(write_path))
     csvIO.seek(0)
     CsvToTxt(csvIO, write_path, original_path)
 
@@ -443,35 +442,15 @@ def UpdateOriginalToDrive():
                 LOG_ERROR(2, f"Error: {e}")
                 logger.exception(e)
     
-    file_list = rclone.check(ADV_DRIVE_PATH, ADV_REMOTE_PATH)
-    LOG_WARN(2, f"There is {len(file_list)} files changed")
-    LOG_DEBUG(2, f"file_list : {file_list}")
-    for obj in file_list:
-        if obj[0] == "*":
-            LOG_DEBUG(2, f"Update '{obj[1]}' file to remote")
-    for obj in file_list:
-        if obj[0] == "+":
-            LOG_DEBUG(2, f"Add new '{obj[1]}' file to remote")
-    # TODO Check result is okay
-    if True:
-        rclone.sync(ADV_DRIVE_PATH, ADV_REMOTE_PATH)
     return file_list
 
 
 # 번역 수정사항 반영
 # Google Drive > GakumasTranslationDataKor
-def ConvertDriveToOutput(bFullUpdate=False):
-    if bFullUpdate:
-        LOG_DEBUG(2, "Try Full Update")
-        rclone.copy(ADV_REMOTE_PATH, ADV_DRIVE_PATH)
+def ConvertDriveToOutput(drive_file_paths=None, bFullUpdate=False):
+    if drive_file_paths is None:
+        LOG_DEBUG(2, "No file list provided, scanning local drive")
         drive_file_paths = Helper_GetFilesFromDir(ADV_DRIVE_PATH, ".xlsx", "adv_")
-    else:
-        LOG_DEBUG(2, "Check updated files")
-        check_result = rclone.check(ADV_REMOTE_PATH, ADV_DRIVE_PATH)
-        # for obj in check_result: obj[1] = os.path.basename(obj[1])[:-5]+".txt"
-        # LOG_DEBUG(2, f"Check result {check_result}")
-        drive_file_paths = Helper_GetFilesFromDirByCheck(check_result, ADV_DRIVE_PATH, ".xlsx", "adv_")
-        rclone.copy(ADV_REMOTE_PATH, ADV_DRIVE_PATH)
     if len(drive_file_paths) <= 0:
         LOG_INFO(2, "ADV is not updated, skip")
         return [],[]

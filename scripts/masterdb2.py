@@ -7,7 +7,6 @@ import pandas as pd, openpyxl, xlsxwriter, tqdm
 
 import string
 
-from . import rclone
 from .helper import *
 from .log import *
 from copy import deepcopy
@@ -1133,34 +1132,14 @@ def UpdateOriginalToDrive():
     LOG_DEBUG(2, f"Sum of untranslated values : {empty_value_count}")
 
     
-    file_list = rclone.check(MASTERDB2_DRIVE_PATH, MASTERDB2_REMOTE_PATH)
-    LOG_WARN(2, f"There is {len(file_list)} files changed")
-    LOG_DEBUG(2, f"file_list : {file_list}")
-    for obj in file_list:
-        if obj[0] == "*":
-            LOG_DEBUG(2, f"Update '{obj[1]}' file to remote")
-    for obj in file_list:
-        if obj[0] == "+":
-            LOG_DEBUG(2, f"Add new '{obj[1]}' file to remote")
-    if True:
-        LOG_DEBUG(2, f"Upload result to remote")
-        rclone.sync(MASTERDB2_DRIVE_PATH, MASTERDB2_REMOTE_PATH)
     return file_list
 
 # Google Drive > GakumasTranslationDataKor
 # TODO : Implement this
-def ConvertDriveToOutput(bFullUpdate=False):
-    if bFullUpdate:
-        LOG_DEBUG(2, "Try Full Update")
-        rclone.copy(MASTERDB2_REMOTE_PATH, MASTERDB2_DRIVE_PATH)
+def ConvertDriveToOutput(drive_file_paths=None, bFullUpdate=False):
+    if drive_file_paths is None:
+        LOG_DEBUG(2, "No file list provided, scanning local drive")
         drive_file_paths = Helper_GetFilesFromDir(MASTERDB2_DRIVE_PATH, ".xlsx")
-    else:
-        LOG_DEBUG(2, "Check updated files")
-        check_result = rclone.check(MASTERDB2_REMOTE_PATH, MASTERDB2_DRIVE_PATH)
-        # for obj in check_result: obj[1] = os.path.basename(obj[1])[:-5]+".txt"
-        # LOG_DEBUG(2, f"Check result {check_result}")
-        drive_file_paths = Helper_GetFilesFromDirByCheck(check_result, MASTERDB2_DRIVE_PATH, ".xlsx")
-        rclone.copy(MASTERDB2_REMOTE_PATH, MASTERDB2_DRIVE_PATH)
     if len(drive_file_paths) <= 0:
         LOG_INFO(2, "MasterDB is not updated, skip")
         return [],[]
@@ -1171,7 +1150,10 @@ def ConvertDriveToOutput(bFullUpdate=False):
             todo_list.append(filename[:-5])
 
     ORIGIN_CWD = os.getcwd()
-    convert_yaml_types_in_parallel(todo_list)
+    try:
+        convert_yaml_types_in_parallel(todo_list)
+    finally:
+        os.chdir(ORIGIN_CWD)
 
 
     LOG_INFO(2, f"Converting {len(drive_file_paths)} MasterDB files")

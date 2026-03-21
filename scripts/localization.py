@@ -7,7 +7,6 @@ import openpyxl
 import xlsxwriter
 
 from .helper import *
-from . import rclone
 from .log import *
 """
 Converter Helper
@@ -81,18 +80,13 @@ def UpdateOriginalToDrive(bFullUpdate = False):
 
 # 번역 수정사항 반영
 # Google Drive > GakumasTranslationDataKor
-def ConvertDriveToOutput(bFullUpdate=False):
-    if bFullUpdate:
-        LOG_DEBUG(2, "Try Full Update")
-        rclone.copy(LOCALIZATION_REMOTE_PATH, DRIVE_PATH)
-        drive_file_paths = [(LOCALIZATION_DRIVE_PATH, LOCALIZATION_FILE, os.path.basename(LOCALIZATION_DRIVE_PATH))]
-    else:
-        LOG_DEBUG(2, "Check updated files")
-        check_result = rclone.check(LOCALIZATION_REMOTE_PATH, DRIVE_PATH)
-        drive_file_paths = []
-        if len(check_result) > 0:
-            rclone.copy(LOCALIZATION_REMOTE_PATH, DRIVE_PATH)
-            drive_file_paths += [(LOCALIZATION_DRIVE_PATH, LOCALIZATION_FILE, os.path.basename(LOCALIZATION_DRIVE_PATH))]
+def ConvertDriveToOutput(drive_file_paths=None, bFullUpdate=False):
+    if drive_file_paths is None:
+        LOG_DEBUG(2, "No file list provided, scanning local drive")
+        if os.path.exists(LOCALIZATION_DRIVE_PATH):
+            drive_file_paths = [(LOCALIZATION_DRIVE_PATH, LOCALIZATION_FILE, os.path.basename(LOCALIZATION_DRIVE_PATH))]
+        else:
+            drive_file_paths = []
 
     if len(drive_file_paths) <= 0:
         LOG_INFO(2, "Localization file is not updated, skip")
