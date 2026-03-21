@@ -64,6 +64,80 @@ def DB_get(key, default=""):
 
 
 
+_ARRAY_KEY_PATTERN = re.compile(r'^(\w*[Dd]escriptions)\[(\d+)\]\.text$')
+
+
+def _parse_array_key(key_id: str):
+    """Parse array-based key ID like 'produceDescriptions[3].text'.
+
+    Returns (field_name, index) if it's a Descriptions array key, None otherwise.
+    """
+    m = _ARRAY_KEY_PATTERN.match(key_id)
+    if not m:
+        return None
+    return m.group(1), int(m.group(2))
+
+
+def _get_prev_array_element(record, all_records, field_name, idx, json_data):
+    """Get the text of the previous array element (idx-1).
+
+    Lookup order:
+    1. Same primary key records in all_records with ID = field_name[idx-1].text
+    2. Source JSON data
+
+    Returns the previous element's text (translated if from records, original if from JSON),
+    or None if not found or idx is 0.
+    """
+    if idx <= 0:
+        return None
+
+    prev_key_id = f"{field_name}[{idx - 1}].text"
+
+    # Extract primary key values from current record for matching
+    pk_fields = {}
+    i = 0
+    while f"KEY ID {i}" in record:
+        pk_fields[record[f"KEY ID {i}"]] = record[f"KEY VALUE {i}"]
+        i += 1
+
+    # Search in all_records for matching primary key + prev ID
+    for r in all_records:
+        if r.get("ID") != prev_key_id:
+            continue
+        # Check primary key match
+        match = True
+        j = 0
+        while f"KEY ID {j}" in r:
+            if r.get(f"KEY VALUE {j}") != pk_fields.get(r.get(f"KEY ID {j}")):
+                match = False
+                break
+            j += 1
+        if match:
+            # Prefer translation, fall back to original
+            return r.get("번역") or r.get("원문", "")
+
+    # Fall back to JSON data
+    if json_data is not None and "data" in json_data:
+        for data_entry in json_data["data"]:
+            # Check primary key match
+            pk_match = all(
+                str(data_entry.get(k)) == v for k, v in pk_fields.items()
+            )
+            if not pk_match:
+                continue
+            # Navigate to the array field
+            arr = data_entry.get(field_name)
+            if isinstance(arr, list) and idx - 1 < len(arr):
+                prev_elem = arr[idx - 1]
+                if isinstance(prev_elem, dict):
+                    return prev_elem.get("text", "")
+                elif isinstance(prev_elem, str):
+                    return prev_elem
+            break
+
+    return None
+
+
 def path_normalize_for_pk(path_str: str) -> str:
     return re.sub(r"\[\d+\]", "", path_str)
 
@@ -516,6 +590,39 @@ def _match_kr_record(jp_record, jp_keys, candidates):
     return kr_target_idx, kr_target_record
 
 
+def _apply_particle_correction(record, all_records, json_data):
+    """Apply Korean particle correction to a DB-filled translation.
+
+    Only applies when:
+    - record ID is a Descriptions array key (e.g. produceDescriptions[3].text)
+    - record has a non-empty translation
+    - previous array element can be found
+
+    Mutates record["번역"] in place. Returns True if correction was applied.
+    """
+    from .korean import adjust_boundary, last_korean_char
+
+    translation = record.get("번역", "")
+    if not translation:
+        return False
+
+    parsed = _parse_array_key(record.get("ID", ""))
+    if parsed is None:
+        return False
+
+    field_name, idx = parsed
+    prev_text = _get_prev_array_element(record, all_records, field_name, idx, json_data)
+    if not prev_text:
+        return False
+
+    adjusted_prev, adjusted_next = adjust_boundary(prev_text, translation)
+    if adjusted_next != translation:
+        LOG_DEBUG(2, f"Particle correction: '{translation}' → '{adjusted_next}' (prev: '{prev_text}')")
+        record["번역"] = adjusted_next
+        return True
+    return False
+
+
 def _UpdateXlsx(file_name: str):
     empty_value_counter = 0
     warnings = []
@@ -537,8 +644,18 @@ def _UpdateXlsx(file_name: str):
     except FileNotFoundError:
         old_kr_data_kv = {}
 
+    # Load source JSON for particle correction fallback
+    json_data = None
+    try:
+        json_data = ReadJson(file_name)
+    except Exception:
+        pass
+
     # Build index for O(1) primary key lookup
     kr_index = _build_kr_index(kr_data_records)
+
+    # Track which records got DB-filled translations (for particle correction)
+    db_filled_records = []
 
     # Collect new records to insert (avoid modifying kr_data_records during iteration)
     # Each entry: (insert_after_idx, new_record) or (None, new_record) for append
@@ -556,6 +673,8 @@ def _UpdateXlsx(file_name: str):
             jp_record["번역"] = DB_get(jp_record["원문"])
             if jp_record["번역"] == "":
                 jp_record["번역"] = old_kr_data_kv.get(jp_record["원문"], "")
+            if jp_record["번역"] != "":
+                db_filled_records.append(jp_record)
             empty_value_counter += 1
             jp_record["_GAKU_TOUCHED"] = True
             if kr_target_idx == -1:
@@ -583,8 +702,18 @@ def _UpdateXlsx(file_name: str):
         record.pop("_GAKU_TOUCHED")
         if record["번역"] == "":
             record["번역"] = DB_get(record["원문"])
+            if record["번역"] != "":
+                db_filled_records.append(record)
             LOG_DEBUG(2, f"[{file_name}] Untranslated record, using DB cache")
         result_records.append(record)
+
+    # Apply particle correction to DB-filled translations
+    correction_count = 0
+    for record in db_filled_records:
+        if _apply_particle_correction(record, result_records, json_data):
+            correction_count += 1
+    if correction_count > 0:
+        LOG_DEBUG(2, f"[{file_name}] Applied {correction_count} particle corrections")
 
     WriteXlsx(file_name, result_records)
     return empty_value_counter, warnings

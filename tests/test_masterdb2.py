@@ -923,6 +923,163 @@ class TestUpdateXlsx:
         assert len(records) == 3
 
 
+# ============================================================
+# Array boundary particle correction in UpdateXlsx
+# ============================================================
+
+
+class TestParseArrayKey:
+    """Test _parse_array_key helper."""
+
+    def test_array_key(self):
+        from scripts.masterdb2 import _parse_array_key
+        field, idx = _parse_array_key("produceDescriptions[3].text")
+        assert field == "produceDescriptions"
+        assert idx == 3
+
+    def test_non_array_key(self):
+        from scripts.masterdb2 import _parse_array_key
+        result = _parse_array_key("name")
+        assert result is None
+
+    def test_nested_array(self):
+        from scripts.masterdb2 import _parse_array_key
+        field, idx = _parse_array_key("playProduceDescriptions[0].text")
+        assert field == "playProduceDescriptions"
+        assert idx == 0
+
+    def test_non_descriptions_array(self):
+        """Arrays not ending in Descriptions should return None."""
+        from scripts.masterdb2 import _parse_array_key
+        result = _parse_array_key("someOtherArray[5].text")
+        assert result is None
+
+
+class TestGetPrevArrayElement:
+    """Test _get_prev_array_element helper."""
+
+    def test_prev_from_records(self):
+        """When prev element exists in records, use its translation."""
+        from scripts.masterdb2 import _get_prev_array_element
+        records = [
+            {"ID": "produceDescriptions[2].text", "원문": "호조", "번역": "호조",
+             "KEY ID 0": "id", "KEY VALUE 0": "card-001"},
+            {"ID": "produceDescriptions[3].text", "원문": "が3以上", "번역": "가 3 이상",
+             "KEY ID 0": "id", "KEY VALUE 0": "card-001"},
+        ]
+        result = _get_prev_array_element(
+            records[1], records, "produceDescriptions", 3, None
+        )
+        assert result == "호조"
+
+    def test_prev_from_json(self):
+        """When prev element is not in records (number/code), read from JSON."""
+        from scripts.masterdb2 import _get_prev_array_element
+        records = [
+            {"ID": "produceDescriptions[3].text", "원문": "以下の時", "번역": "이하일 때",
+             "KEY ID 0": "id", "KEY VALUE 0": "card-001"},
+        ]
+        # Simulate JSON data with the array
+        json_data = {
+            "data": [
+                {
+                    "id": "card-001",
+                    "produceDescriptions": [
+                        {"text": "stat"},
+                        {"text": "100%"},
+                        {"text": "percent"},
+                        {"text": "以下の時"},
+                    ],
+                }
+            ]
+        }
+        result = _get_prev_array_element(
+            records[0], records, "produceDescriptions", 3, json_data
+        )
+        assert result == "percent"
+
+    def test_prev_index_zero(self):
+        """Index 0 has no previous element."""
+        from scripts.masterdb2 import _get_prev_array_element
+        records = [
+            {"ID": "produceDescriptions[0].text", "원문": "test", "번역": "테스트",
+             "KEY ID 0": "id", "KEY VALUE 0": "card-001"},
+        ]
+        result = _get_prev_array_element(
+            records[0], records, "produceDescriptions", 0, None
+        )
+        assert result is None
+
+
+class TestUpdateXlsxParticleCorrection:
+    """Integration test: UpdateXlsx applies particle correction on DB-filled translations."""
+
+    def test_particle_corrected_on_db_fill(self, tmp_path, shelve_test_cleanup):
+        """When DB fills translation for array element, particle should be corrected."""
+        import scripts.masterdb2 as mdb2
+        from scripts.masterdb2 import DB_save, db_session
+
+        # Pre-populate DB with a cached translation that has wrong particle
+        with db_session():
+            DB_save("が0の時、使用可", "가 0일 때, 사용 가능")
+
+        # xlsx has record for [1] (stat name) but NOT [2] (particle text)
+        xlsx_path = str(tmp_path / "drive2" / "ProduceItem.xlsx")
+        os.makedirs(os.path.dirname(xlsx_path), exist_ok=True)
+        create_masterdb_xlsx(xlsx_path, None, [
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "item-001",
+             "ID": "produceDescriptions[1].text", "원문": "集中", "번역": "집중", "설명": ""},
+        ])
+
+        # JSON has full array with [0]=code, [1]=集中, [2]=が0の時
+        json_path = str(tmp_path / "json" / "ProduceItem.json")
+        os.makedirs(os.path.dirname(json_path), exist_ok=True)
+        create_masterdb_json(json_path, ["id"], [
+            {
+                "id": "item-001",
+                "produceDescriptions": [
+                    {"produceDescriptionType": "Exam", "text": "5"},
+                    {"produceDescriptionType": "ProduceExamEffectType", "text": "集中"},
+                    {"produceDescriptionType": "PlainText", "text": "が0の時、使用可"},
+                ],
+            }
+        ])
+
+        old_xlsx = str(tmp_path / "drive1" / "ProduceItem.xlsx")
+        os.makedirs(os.path.dirname(old_xlsx), exist_ok=True)
+        create_masterdb_xlsx(old_xlsx, None, [
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "x",
+             "ID": "name", "원문": "x", "번역": "x", "설명": ""},
+        ])
+
+        saved = {
+            "json": mdb2.MASTERDB_JSON_PATH,
+            "drive2": mdb2.MASTERDB2_DRIVE_PATH,
+            "drive1": mdb2.MASTERDB_DRIVE_PATH,
+        }
+        mdb2.MASTERDB_JSON_PATH = str(tmp_path / "json")
+        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
+        mdb2.MASTERDB_DRIVE_PATH = str(tmp_path / "drive1")
+        try:
+            UpdateXlsx("ProduceItem")
+        finally:
+            mdb2.MASTERDB_JSON_PATH = saved["json"]
+            mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
+            mdb2.MASTERDB_DRIVE_PATH = saved["drive1"]
+
+        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
+        try:
+            records = ReadXlsx("ProduceItem")
+        finally:
+            mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
+
+        # Find the record for [2].text
+        desc2 = [r for r in records if "produceDescriptions[2]" in r.get("ID", "")]
+        assert len(desc2) == 1
+        # 집중 ends with consonant (중), so 가 → 이
+        assert desc2[0]["번역"] == "이 0일 때, 사용 가능"
+
+
 class TestWriteXlsx:
     def test_writes_valid_xlsx(self, tmp_path):
         import scripts.masterdb2 as mdb2
