@@ -1,25 +1,18 @@
-"""Tests for Generic and Localization pipelines using synthetic fixtures."""
+"""Tests for Generic pipeline using synthetic fixtures."""
 
 import os
 import json
 
 import pytest
 
-from tests.fixtures.create_fixtures import (
-    create_generic_xlsx,
-    create_lyrics_xlsx,
-    create_localization_xlsx,
-)
+from tests.fixtures.create_fixtures import create_generic_xlsx, create_lyrics_xlsx
 from scripts.generic import (
-    Serialize as GenericSerialize,
-    Deserialize as GenericDeserialize,
     XlsxToJson as GenericXlsxToJson,
     GENERIC_FILE_LIST,
 )
-from scripts.localization import (
-    Serialize as LocSerialize,
-    Deserialize as LocDeserialize,
-    XlsxToJson as LocXlsxToJson,
+from scripts.helper import (
+    Serialize as GenericSerialize,
+    Deserialize as GenericDeserialize,
 )
 
 
@@ -44,10 +37,6 @@ class TestSerializeDeserialize:
     def test_roundtrip(self):
         original = "hello\rworld\ttab"
         assert GenericDeserialize(GenericSerialize(original)) == original
-
-    def test_localization_matches_generic(self):
-        text = "test\\rvalue\\twith\\rspecials"
-        assert LocDeserialize(text) == GenericDeserialize(text)
 
     def test_empty_string(self):
         assert GenericSerialize("") == ""
@@ -203,77 +192,12 @@ class TestLyricsXlsxToJson:
 
 
 # ============================================================
-# Localization XlsxToJson — synthetic fixtures
+# ☢ Marker
 # ============================================================
 
 
-class TestLocalizationXlsxToJson:
-    def test_basic_conversion(self, tmp_path):
-        """Convert a synthetic localization xlsx."""
-        xlsx_path = str(tmp_path / "localization.xlsx")
-        create_localization_xlsx(xlsx_path, [
-            {0: "ref1", "ID": "ui.button.ok", "번역": "확인"},
-            {0: "ref2", "ID": "ui.button.cancel", "번역": "취소"},
-        ])
-        output_path = str(tmp_path / "localization.json")
-
-        LocXlsxToJson(xlsx_path, output_path)
-
-        with open(output_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        assert data["ui.button.ok"] == "확인"
-        assert data["ui.button.cancel"] == "취소"
-
-    def test_output_keys_are_id_column(self, tmp_path):
-        """Keys in output should come from ID column, not column 0."""
-        xlsx_path = str(tmp_path / "localization.xlsx")
-        create_localization_xlsx(xlsx_path, [
-            {0: "original_ref", "ID": "my.key", "번역": "값"},
-        ])
-        output_path = str(tmp_path / "localization.json")
-
-        LocXlsxToJson(xlsx_path, output_path)
-
-        with open(output_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        assert "my.key" in data
-        assert "original_ref" not in data
-
-    def test_leading_apostrophe_stripped(self, tmp_path):
-        """Leading apostrophe in 번역 column should be stripped."""
-        xlsx_path = str(tmp_path / "localization.xlsx")
-        create_localization_xlsx(xlsx_path, [
-            {0: "ref", "ID": "key", "번역": "'quoted"},
-        ])
-        output_path = str(tmp_path / "localization.json")
-
-        LocXlsxToJson(xlsx_path, output_path)
-
-        with open(output_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        assert data["key"] == "quoted"
-
-    def test_deserialize_applied(self, tmp_path):
-        """Deserialize should convert escape sequences."""
-        xlsx_path = str(tmp_path / "localization.xlsx")
-        create_localization_xlsx(xlsx_path, [
-            {0: "ref", "ID": "key", "번역": "line1\\tline2"},
-        ])
-        output_path = str(tmp_path / "localization.json")
-
-        LocXlsxToJson(xlsx_path, output_path)
-
-        with open(output_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        assert data["key"] == "line1\tline2"
-
-    def test_update_not_supported(self):
-        """UpdateOriginalToDrive returns empty list."""
-        from scripts.localization import UpdateOriginalToDrive
-        assert UpdateOriginalToDrive() == []
-
-    def test_generic_update_not_supported(self):
-        """Generic UpdateOriginalToDrive returns empty list."""
+class TestGenericUpdateNotSupported:
+    def test_returns_empty(self):
         from scripts.generic import UpdateOriginalToDrive
         assert UpdateOriginalToDrive() == []
 
