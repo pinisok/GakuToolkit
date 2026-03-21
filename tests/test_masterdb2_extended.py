@@ -192,12 +192,8 @@ class TestOverrideRecordToJsonExtended:
         # But traversal through indexed nested object should work
         # The actual behavior depends on the code path taken
 
-    def test_top_level_string_array_known_bug(self, shelve_test_cleanup):
-        """Top-level string array override has a known bug (obj = ... instead of obj[key] = ...).
-
-        This test documents the current behavior, not the ideal behavior.
-        See masterdb2.py line 937: `obj = trans_str[...]` assigns to local var.
-        """
+    def test_top_level_string_array(self, shelve_test_cleanup):
+        """Top-level string array (e.g. Tutorial.texts) should be overridden."""
         json_data = {
             "rules": {"primaryKeys": ["id"]},
             "data": [
@@ -212,8 +208,7 @@ class TestOverrideRecordToJsonExtended:
 
         result = OverrideRecordToJson(json_data, records)
 
-        # Known bug: top-level string array is NOT actually overridden
-        assert result["data"][0]["texts"] == ["テキスト1", "テキスト2"]
+        assert result["data"][0]["texts"] == ["텍스트1", "텍스트2"]
 
     def test_multiple_data_items(self, shelve_test_cleanup):
         """Override fields across multiple data items."""

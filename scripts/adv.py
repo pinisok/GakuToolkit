@@ -230,13 +230,14 @@ def _internalCsvToTxt(csv_strings, txt_strings):
                     f"text={new_text}",
                     1,
                 )
-        if line["__tag__"] == "message":
-            if line.get("name") and line["name"] != "" and next_csv_line["name"] != "":
-                txt_strings = txt_strings.replace(
-                    f"name={line['name']}",
-                    f"name={next_csv_line['name']}",
-                    1,
-                )
+                # Name replacement (only for message with text, not narration)
+                if line["__tag__"] == "message":
+                    if line.get("name") and line["name"] != "" and next_csv_line["name"] != "":
+                        txt_strings = txt_strings.replace(
+                            f"name={line['name']}",
+                            f"name={next_csv_line['name']}",
+                            1,
+                        )
                 
         if line["__tag__"] == "title":
             if line.get("title"):

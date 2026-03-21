@@ -395,7 +395,7 @@ def _OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
                                     # LOG_WARN(2, f"Original text is not matched '{original_text}' != '{record['원문']}'")
                                     return False
                                 DB_save(original_text, record["번역"])
-                                obj = trans_str[len("[LA_F]"):].split("[LA_N_F]")
+                                obj[subkey] = trans_str[len("[LA_F]"):].split("[LA_N_F]")
                                 return True
                             else:
                                 LOG_WARN(2, f"Except list but meet invalid translate value \"{trans_str}\" at \"{record}\" / data:[{didx}/{data_list[didx]}]")
