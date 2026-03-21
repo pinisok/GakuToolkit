@@ -5,27 +5,45 @@ import datetime
 
 TARGET_SHEET = "1gjYXr-aFrDLLXUfmsA-tN_Tc5rgovtIfeDqoJM-78jM"
 
+
+def _build_file_chip_cell(url, date_str):
+    """Build a CellData with chipRuns for a file chip + date text.
+
+    Cell text: "@ (2026-03-22)"
+    chipRuns maps the @ at index 0 to a Drive file link chip.
+    """
+    cell_text = f"@ {date_str}"
+    return {
+        "userEnteredValue": {"stringValue": cell_text},
+        "chipRuns": [
+            {
+                "startIndex": 0,
+                "chip": {
+                    "chipType": "SMART_CHIP",
+                    "link": {"uri": url},
+                },
+            }
+        ],
+    }
+
+
 def log(logs, new_file_urls=None):
     if new_file_urls is None:
         new_file_urls = []
     account = gspread.service_account(r"api.json")
     SHEET = account.open_by_key(TARGET_SHEET)
     worksheet = SHEET.worksheet("업데이트 로그")
-    worksheet.insert_cols([[]],1)
+    sheet_id = worksheet.id
+    worksheet.insert_cols([[]], 1)
 
-    # Build cell data: A2=title, A3=logs, A4+=file chip URLs with date in B column
     now = datetime.datetime.now()
     date_str = now.strftime("(%Y-%m-%d)")
-    cells = [
+
+    # Write title (A2) and log text (A3) via normal update
+    worksheet.update([
         [str(now) + " 업데이트 기록"],
         [logs],
-    ]
-    for url in new_file_urls:
-        cells.append([url, date_str])
-
-    last_row = 2 + len(cells) - 1
-    col_end = "B" if new_file_urls else "A"
-    worksheet.update(cells, f'A2:{col_end}{last_row}')
+    ], 'A2:A3')
 
     # Format title (A2)
     worksheet.format("A2", {
@@ -63,8 +81,34 @@ def log(logs, new_file_urls=None):
             "bold": False
         }
     })
-    # Format file chip rows (A4+)
+
+    # Write file chip rows (A4+) via batchUpdate with chipRuns
     if new_file_urls:
+        chip_rows = []
+        for url in new_file_urls:
+            chip_rows.append({"values": [_build_file_chip_cell(url, date_str)]})
+
+        start_row = 3  # 0-indexed row 3 = A4
+        SHEET.batch_update({
+            "requests": [
+                {
+                    "updateCells": {
+                        "rows": chip_rows,
+                        "fields": "userEnteredValue,chipRuns",
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": start_row,
+                            "endRowIndex": start_row + len(chip_rows),
+                            "startColumnIndex": 0,
+                            "endColumnIndex": 1,
+                        },
+                    }
+                }
+            ]
+        })
+
+        # Format chip rows
+        last_row = 4 + len(new_file_urls) - 1
         worksheet.format(f"A4:A{last_row}", {
             "backgroundColor": {
                 "red": 0.93,
@@ -82,4 +126,5 @@ def log(logs, new_file_urls=None):
                 "bold": False
             }
         })
+
     gfmt.set_column_width(worksheet, 'A', 900)
