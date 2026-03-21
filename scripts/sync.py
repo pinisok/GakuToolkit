@@ -54,20 +54,21 @@ def download_all(bFullUpdate=False, ADV=True, MASTERDB=True, GENERIC=True, LOCAL
 def upload_all(ADV=True, MASTERDB=True):
     """Phase 3: Upload local → remote for pipelines that support Update.
 
-    Returns (adv_file_list, masterdb_file_list) with rclone check results.
+    Returns (adv_result, masterdb_result) where each result is
+    {"files": [...], "remote_path": "..."} or {"files": [], "remote_path": ""}.
     """
-    adv_files = []
-    masterdb_files = []
+    adv_result = {"files": [], "remote_path": ADV_REMOTE_PATH}
+    masterdb_result = {"files": [], "remote_path": MASTERDB2_REMOTE_PATH}
 
     if ADV:
         LOG_INFO(1, "Upload ADV")
-        adv_files = _upload_pipeline(ADV_DRIVE_PATH, ADV_REMOTE_PATH)
+        adv_result["files"] = _upload_pipeline(ADV_DRIVE_PATH, ADV_REMOTE_PATH)
 
     if MASTERDB:
         LOG_INFO(1, "Upload MasterDB")
-        masterdb_files = _upload_pipeline(MASTERDB2_DRIVE_PATH, MASTERDB2_REMOTE_PATH)
+        masterdb_result["files"] = _upload_pipeline(MASTERDB2_DRIVE_PATH, MASTERDB2_REMOTE_PATH)
 
-    return adv_files, masterdb_files
+    return adv_result, masterdb_result
 
 
 # ============================================================

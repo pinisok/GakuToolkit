@@ -60,13 +60,23 @@ def Update(ADV=True, MASTERDB=True, bFullUpdate=False):
 
     return ADV_FILE, MASTERDB_FILE, all_warnings
     
-def getDriveUrl(file):
+def getDriveUrl(rel_path, remote_path=""):
+    """Get a clickable Google Sheets URL for a file.
+    rel_path: relative path from rclone.check (e.g. "cidol/file.xlsx")
+    remote_path: rclone remote base (e.g. "gakumas:Gakumas_KR/text assets")
+    """
+    if not remote_path:
+        return rel_path
+    full_remote = remote_path + "/" + rel_path
     try:
-        link = rclone.link(os.path.join(file[1], file[2])).replace("https://drive.google.com/open?id=", "https://docs.google.com/spreadsheets/d/")
-        return f"[{file[1]}]({link})"
+        link = rclone.link(full_remote).replace(
+            "https://drive.google.com/open?id=",
+            "https://docs.google.com/spreadsheets/d/"
+        )
+        return f"{rel_path} ({link})"
     except Exception as e:
-        LOG_INFO(1, f"{e}")
-        return file[1]
+        LOG_DEBUG(1, f"Failed to get drive link: {e}")
+        return rel_path
 
 def _convert_summary(NAME, ARR):
     if len(ARR[0]) + len(ARR[1]) > 0:
@@ -80,22 +90,25 @@ def _convert_summary(NAME, ARR):
             for fn in ARR[1]:
                 LOG_INFO(2, f"{fn} 번역 갱신")
 
-def _update_summary(NAME, ARR, warnings=None):
+def _update_summary(NAME, upload_result, warnings=None):
     if warnings is None:
         warnings = {}
+    ARR = upload_result.get("files", [])
+    remote_path = upload_result.get("remote_path", "")
     if len(ARR) > 0:
         LOG_INFO(1, NAME)
         ARR.sort()
         for fn in ARR:
+            rel_path = fn[1] if len(fn) > 1 else ""
+            url = getDriveUrl(rel_path, remote_path)
             if fn[0] == "*":
-                LOG_INFO(2, f"업데이트 : '{getDriveUrl(fn)}'")
+                LOG_INFO(2, f"업데이트 : {url}")
             if fn[0] == "+":
-                LOG_INFO(2, f"추가 : '{getDriveUrl(fn)}'")
+                LOG_INFO(2, f"추가 : {url}")
             # 해당 파일의 경고 출력 (파일당 최대 5건, 초과 시 요약)
             MAX_WARNINGS_PER_FILE = 5
-            file_path = fn[1] if len(fn) > 1 else ""
             for wkey, wlist in warnings.items():
-                if wkey in file_path:
+                if wkey in rel_path:
                     for w in wlist[:MAX_WARNINGS_PER_FILE]:
                         LOG_INFO(3, f"⚠ {w}")
                     if len(wlist) > MAX_WARNINGS_PER_FILE:
@@ -114,8 +127,8 @@ def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
 
     # Phase 2: Update (submodule → local drive)
     # Phase 3: Upload to Google Drive
-    U_UPLOAD_ADV = []
-    U_UPLOAD_MASTERDB = []
+    U_UPLOAD_ADV = {"files": [], "remote_path": ""}
+    U_UPLOAD_MASTERDB = {"files": [], "remote_path": ""}
     update_warnings = {}
     if UPDATE:
         LOG_INFO(0, "Phase 2: Update")
@@ -129,7 +142,7 @@ def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
     logHandler = logging.StreamHandler(logStream)
     AddLogHandler(logHandler)
     if UPDATE:
-        if len(U_UPLOAD_ADV) + len(U_UPLOAD_MASTERDB) > 0:
+        if len(U_UPLOAD_ADV["files"]) + len(U_UPLOAD_MASTERDB["files"]) > 0:
             has_changes = True
             LOG_INFO(0, "---------------- 업데이트된 파일 요약 ----------------")
 

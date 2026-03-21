@@ -174,7 +174,7 @@ class TestUpdateSummary:
         arr = [["*", "path/to/file.xlsx"]]
 
         with caplog.at_level(logging.INFO, logger="GakuToolkit"):
-            _update_summary("ADV", arr)
+            _update_summary("ADV", {"files": arr, "remote_path": ""})
 
         assert any("업데이트" in r.message for r in caplog.records)
 
@@ -185,7 +185,7 @@ class TestUpdateSummary:
         arr = [["+", "path/to/new.xlsx"]]
 
         with caplog.at_level(logging.INFO, logger="GakuToolkit"):
-            _update_summary("ADV", arr)
+            _update_summary("ADV", {"files": arr, "remote_path": ""})
 
         assert any("추가" in r.message for r in caplog.records)
 
@@ -194,7 +194,7 @@ class TestUpdateSummary:
         from main import _update_summary
 
         with caplog.at_level(logging.INFO, logger="GakuToolkit"):
-            _update_summary("ADV", [])
+            _update_summary("ADV", {"files": [], "remote_path": ""})
 
         assert len(caplog.records) == 0
 
@@ -205,7 +205,7 @@ class TestUpdateSummary:
         arr = [["*", "updated.xlsx"], ["+", "new.xlsx"]]
 
         with caplog.at_level(logging.INFO, logger="GakuToolkit"):
-            _update_summary("ADV", arr)
+            _update_summary("ADV", {"files": arr, "remote_path": ""})
 
         messages = [r.message for r in caplog.records]
         assert any("업데이트" in m for m in messages)
@@ -219,7 +219,7 @@ class TestUpdateSummary:
         warnings = {"adv_cidol-amao_01": ["원문 불일치 at line 5", "원문 불일치 at line 12"]}
 
         with caplog.at_level(logging.INFO, logger="GakuToolkit"):
-            _update_summary("ADV", arr, warnings)
+            _update_summary("ADV", {"files": arr, "remote_path": ""}, warnings)
 
         messages = [r.message for r in caplog.records]
         assert any("업데이트" in m for m in messages)
@@ -234,7 +234,7 @@ class TestUpdateSummary:
         warnings = {"adv_cidol-amao_01": ["원문 불일치 at line 5"]}
 
         with caplog.at_level(logging.INFO, logger="GakuToolkit"):
-            _update_summary("ADV", arr, warnings)
+            _update_summary("ADV", {"files": arr, "remote_path": ""}, warnings)
 
         messages = [r.message for r in caplog.records]
         assert not any("⚠" in m for m in messages)
@@ -246,7 +246,7 @@ class TestUpdateSummary:
         arr = [["*", "file.xlsx"]]
 
         with caplog.at_level(logging.INFO, logger="GakuToolkit"):
-            _update_summary("ADV", arr)
+            _update_summary("ADV", {"files": arr, "remote_path": ""})
 
         messages = [r.message for r in caplog.records]
         assert any("업데이트" in m for m in messages)
@@ -260,7 +260,7 @@ class TestUpdateSummary:
         warnings = {"adv_test": [f"원문 불일치 at line {i}" for i in range(20)]}
 
         with caplog.at_level(logging.INFO, logger="GakuToolkit"):
-            _update_summary("ADV", arr, warnings)
+            _update_summary("ADV", {"files": arr, "remote_path": ""}, warnings)
 
         messages = [r.message for r in caplog.records]
         warning_lines = [m for m in messages if "⚠" in m]
