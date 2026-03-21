@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+from datetime import datetime
 
 import pytest
 
@@ -11,6 +12,8 @@ from scripts.helper import (
     CHARACTER_REGEX_TRANS_MAP,
     REGEX_DOTS_3,
     REGEX_DOTS_4_TO_6,
+    load_cache_date,
+    save_cache_date,
 )
 
 
@@ -197,3 +200,60 @@ class TestRegexPatterns:
 
     def test_single_dot_not_replaced(self):
         assert REGEX_DOTS_3.sub("…", "test.end") == "test.end"
+
+
+class TestLoadCacheDate:
+    """Tests for load_cache_date."""
+
+    def test_reads_valid_date(self, tmp_path):
+        cache_file = str(tmp_path / "cache.txt")
+        with open(cache_file, "w") as f:
+            f.write("2026-03-20 10:30:00")
+        result = load_cache_date(cache_file)
+        assert result == datetime(2026, 3, 20, 10, 30, 0)
+
+    def test_returns_none_for_missing_file(self, tmp_path):
+        result = load_cache_date(str(tmp_path / "nonexistent.txt"))
+        assert result is None
+
+    def test_returns_none_for_invalid_content(self, tmp_path):
+        cache_file = str(tmp_path / "cache.txt")
+        with open(cache_file, "w") as f:
+            f.write("not a date")
+        result = load_cache_date(cache_file)
+        assert result is None
+
+    def test_returns_none_for_empty_file(self, tmp_path):
+        cache_file = str(tmp_path / "cache.txt")
+        with open(cache_file, "w") as f:
+            f.write("")
+        result = load_cache_date(cache_file)
+        assert result is None
+
+
+class TestSaveCacheDate:
+    """Tests for save_cache_date."""
+
+    def test_writes_iso_date(self, tmp_path):
+        cache_file = str(tmp_path / "cache.txt")
+        save_cache_date(cache_file)
+        with open(cache_file, "r") as f:
+            content = f.read()
+        # Should be parseable back
+        parsed = datetime.fromisoformat(content)
+        assert parsed.year >= 2026
+
+    def test_creates_file(self, tmp_path):
+        cache_file = str(tmp_path / "new_cache.txt")
+        assert not os.path.exists(cache_file)
+        save_cache_date(cache_file)
+        assert os.path.exists(cache_file)
+
+    def test_overwrites_existing(self, tmp_path):
+        cache_file = str(tmp_path / "cache.txt")
+        with open(cache_file, "w") as f:
+            f.write("old content")
+        save_cache_date(cache_file)
+        with open(cache_file, "r") as f:
+            content = f.read()
+        assert content != "old content"

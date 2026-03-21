@@ -1,5 +1,5 @@
 import os, re, json, subprocess
-from datetime import date
+from datetime import date, datetime
 
 from .log import *
 
@@ -60,6 +60,25 @@ def Deserialize(string: str, rules=SERIALIZE_LIST_FULL) -> str:
     for original, escaped in rules:
         result = result.replace(escaped, original)
     return result
+
+
+def load_cache_date(cache_file):
+    """Read last update date from cache file. Returns None if missing or invalid."""
+    if not os.path.exists(cache_file):
+        return None
+    with open(cache_file, 'r') as f:
+        try:
+            line = f.readlines()[0]
+            return datetime.fromisoformat(line.strip())
+        except Exception:
+            return None
+
+
+def save_cache_date(cache_file):
+    """Write current datetime to cache file."""
+    with open(cache_file, 'w') as f:
+        f.write(datetime.today().isoformat(" "))
+
 
 """
 Get all files from dir

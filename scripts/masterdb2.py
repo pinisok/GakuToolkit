@@ -541,43 +541,24 @@ from .paths import (
     MASTERDB_TEMP_PATH, MASTERDB_OUTPUT_PATH, MASTERDB_CACHE_FILE,
     GIT_MASTERDB_PATH,
 )
+from .helper import load_cache_date, save_cache_date
 
-# 업데이트 반영
-# gakumas-diff > Google Drive
-def UpdateOriginalToDrive():
-    # Check modified file from git commit
-    last_update_date = None
-    LOG_DEBUG(2, "Check cache file")
-    if os.path.exists(MASTERDB_CACHE_FILE):
-        with open(MASTERDB_CACHE_FILE, 'r') as f:
-            try:
-                last_update_date = datetime.fromisoformat(f.readlines()[0])
-                LOG_DEBUG(2, f"Load update date {last_update_date}")
-            except Exception:
-                LOG_WARN(2, "Invalid masterdb cache file, skip update")
-                last_update_date = None
-    LOG_DEBUG(2, "Write datetime cache file")
-    with open(MASTERDB_CACHE_FILE, 'w') as f:
-        f.write(datetime.today().isoformat(" "))
-    if last_update_date != None:
-        LOG_DEBUG(2, "Check git diff")
-        original_file_paths = Helper_GetFilesFromDirByDate(last_update_date, MASTERDB_ORIGINAL_PATH, ".yaml")
-    else:
-        original_file_paths = []
-    if len(original_file_paths) <= 0:
-        LOG_INFO(2, "MasterDB is not updated, skip")
-        return []
 
-    file_list = []
-    for _, _, name in original_file_paths:
-        file_list.append(name[:-5])
-    if RULES == None:
+def _filter_masterdb_files(file_paths):
+    """Extract file names from paths, convert yaml→json, filter by RULES."""
+    file_list = [name[:-5] for _, _, name in file_paths]
+    if RULES is None:
         LoadRules()
-    file_list = [file_name for file_name in convert_yaml_types_in_parallel(file_list) if file_name in RULES]
-    
+    file_list = [
+        name for name in convert_yaml_types_in_parallel(file_list)
+        if name in RULES
+    ]
+    return file_list
 
+
+def _update_masterdb_xlsx_batch(file_list):
+    """Run UpdateXlsx for each file. Returns total empty (untranslated) count."""
     empty_value_count = 0
-    LOG_INFO(2, f"Updating {len(file_list)} MasterDB files")
     for idx, file_name in enumerate(file_list):
         _empty_value_count = 0
         try:
@@ -587,38 +568,14 @@ def UpdateOriginalToDrive():
         except Exception as e:
             LOG_ERROR(2, f"Error {e}")
             logger.exception(e)
-        empty_value_count+=_empty_value_count
-    LOG_DEBUG(2, f"Sum of untranslated values : {empty_value_count}")
-
-    
-    return file_list
-
-# Google Drive > GakumasTranslationDataKor
-# TODO : Implement this
-def ConvertDriveToOutput(drive_file_paths=None, bFullUpdate=False):
-    if drive_file_paths is None:
-        LOG_DEBUG(2, "No file list provided, scanning local drive")
-        drive_file_paths = Helper_GetFilesFromDir(MASTERDB2_DRIVE_PATH, ".xlsx")
-    if len(drive_file_paths) <= 0:
-        LOG_INFO(2, "MasterDB is not updated, skip")
-        return [],[]
-    todo_list = None
-    if len(drive_file_paths) > 0:
-        todo_list = []
-        for abs_path, rel_path, filename in drive_file_paths:
-            todo_list.append(filename[:-5])
-
-    ORIGIN_CWD = os.getcwd()
-    try:
-        convert_yaml_types_in_parallel(todo_list)
-    finally:
-        os.chdir(ORIGIN_CWD)
+        empty_value_count += _empty_value_count
+    return empty_value_count
 
 
-    LOG_INFO(2, f"Converting {len(drive_file_paths)} MasterDB files")
+def _convert_masterdb_batch(todo_list):
+    """Run CreateJSON for each file. Returns (errors, successes)."""
     converted_file_list = []
     error_file_list = []
-
     for file_name in todo_list:
         LOG_DEBUG(2, f"Start convert from drive to output '{file_name}'")
         try:
@@ -628,5 +585,50 @@ def ConvertDriveToOutput(drive_file_paths=None, bFullUpdate=False):
             LOG_ERROR(2, f"Error during Convert MasterDB drive to output: {e}")
             logger.exception(e)
             error_file_list.append((file_name, e))
-
     return error_file_list, converted_file_list
+
+
+# 업데이트 반영
+# gakumas-diff > Google Drive
+def UpdateOriginalToDrive():
+    last_update_date = load_cache_date(MASTERDB_CACHE_FILE)
+    if last_update_date:
+        LOG_DEBUG(2, f"Load update date {last_update_date}")
+    save_cache_date(MASTERDB_CACHE_FILE)
+
+    if last_update_date is not None:
+        LOG_DEBUG(2, "Check git diff")
+        original_file_paths = Helper_GetFilesFromDirByDate(last_update_date, MASTERDB_ORIGINAL_PATH, ".yaml")
+    else:
+        original_file_paths = []
+    if len(original_file_paths) <= 0:
+        LOG_INFO(2, "MasterDB is not updated, skip")
+        return []
+
+    file_list = _filter_masterdb_files(original_file_paths)
+    LOG_INFO(2, f"Updating {len(file_list)} MasterDB files")
+    empty_value_count = _update_masterdb_xlsx_batch(file_list)
+    LOG_DEBUG(2, f"Sum of untranslated values : {empty_value_count}")
+
+    return file_list
+
+
+# Google Drive > GakumasTranslationDataKor
+def ConvertDriveToOutput(drive_file_paths=None, bFullUpdate=False):
+    if drive_file_paths is None:
+        LOG_DEBUG(2, "No file list provided, scanning local drive")
+        drive_file_paths = Helper_GetFilesFromDir(MASTERDB2_DRIVE_PATH, ".xlsx")
+    if len(drive_file_paths) <= 0:
+        LOG_INFO(2, "MasterDB is not updated, skip")
+        return [], []
+
+    todo_list = [filename[:-5] for _, _, filename in drive_file_paths]
+
+    ORIGIN_CWD = os.getcwd()
+    try:
+        convert_yaml_types_in_parallel(todo_list)
+    finally:
+        os.chdir(ORIGIN_CWD)
+
+    LOG_INFO(2, f"Converting {len(drive_file_paths)} MasterDB files")
+    return _convert_masterdb_batch(todo_list)

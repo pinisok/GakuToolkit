@@ -15,6 +15,7 @@ from scripts.adv import (
     _internalReadXlsx,
     _internalXlsxRecordsProcess,
     _internalCsvToTxt,
+    _filter_adv_files,
     CsvToTxt,
     TxtToXlsx,
     XlsxToCsv,
@@ -422,3 +423,40 @@ class TestRoundTrip:
             content = f.read()
         assert "번역된 메시지" in content
         assert "마오" in content
+
+
+class TestFilterAdvFiles:
+    """Test _filter_adv_files blacklist and path mapping."""
+
+    def test_filters_blacklisted_file(self):
+        file_paths = [
+            ("/abs/musics.txt", "rel/musics.txt", "musics.txt"),
+            ("/abs/adv_test_01.txt", "rel/adv_test_01.txt", "adv_test_01.txt"),
+        ]
+        result = _filter_adv_files(file_paths)
+        filenames = [r[2] for r in result]
+        assert "musics.txt" not in filenames
+        assert "adv_test_01.txt" in filenames
+
+    def test_filters_blacklisted_folder(self):
+        file_paths = [
+            ("/abs/adv_pstep_01.txt", "rel/adv_pstep_01.txt", "adv_pstep_01.txt"),
+            ("/abs/adv_cidol_01.txt", "rel/adv_cidol_01.txt", "adv_cidol_01.txt"),
+        ]
+        result = _filter_adv_files(file_paths)
+        filenames = [r[2] for r in result]
+        assert "adv_pstep_01.txt" not in filenames
+        assert "adv_cidol_01.txt" in filenames
+
+    def test_maps_output_path(self):
+        file_paths = [
+            ("/abs/adv_cidol-amao_01.txt", "rel/adv_cidol-amao_01.txt", "adv_cidol-amao_01.txt"),
+        ]
+        result = _filter_adv_files(file_paths)
+        assert len(result) == 1
+        input_path, output_path, filename = result[0]
+        assert "cidol" in output_path
+        assert output_path.endswith(".xlsx")
+
+    def test_empty_input(self):
+        assert _filter_adv_files([]) == []
