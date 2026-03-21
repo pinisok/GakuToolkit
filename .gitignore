@@ -9,4 +9,4 @@ DB.dat
 api.json
 
 output_*.log
-test_output_*.log
+test_output_*.logbackup_*/
