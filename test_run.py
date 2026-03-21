@@ -197,7 +197,6 @@ parser.add_argument("--adv", action="store_true", help="Only ADV pipeline")
 parser.add_argument("--masterdb", action="store_true", help="Only MasterDB pipeline")
 parser.add_argument("--generic", action="store_true", help="Only Generic pipeline")
 parser.add_argument("--localization", action="store_true", help="Only Localization pipeline")
-parser.add_argument("--masterdb2", action="store_true", help="Use MasterDB v2 format")
 # Test-mode specific flags
 parser.add_argument(
     "--isolate-output",
@@ -390,8 +389,6 @@ if args.convert or args.update:
     if args.update:
         main_module.UPDATE = True
 
-if args.masterdb2:
-    main_module.USE_MASTERDB2 = True
 
 # Configure logging
 from scripts.log import logger  # noqa: E402
