@@ -38,6 +38,31 @@ XLSX_TEXT_FORMAT = {'font_name': 'Calibri','bold':False, 'text_wrap':True, 'alig
 REGEX_DOTS_4_TO_6 = re.compile('\.{4,6}')
 REGEX_DOTS_3 = re.compile('\.{2,3}')
 
+# Shared serialization for spreadsheet ↔ code conversion.
+# Generic/Localization use SERIALIZE_LIST_FULL (includes ☢ marker for \r in Google Sheets).
+# MasterDB uses SERIALIZE_LIST_BASIC (no ☢).
+SERIALIZE_LIST_BASIC = [
+    ('\r', '\\r'),
+    ('\t', '\\t'),
+]
+SERIALIZE_LIST_FULL = [
+    ('\r', '\\r'),
+    ('\r', '☢'),       # Google Sheets workaround: ☢ → \r
+    ('\t', '\\t'),
+]
+
+def Serialize(string: str, rules=SERIALIZE_LIST_FULL) -> str:
+    result = string
+    for original, escaped in rules:
+        result = result.replace(original, escaped)
+    return result
+
+def Deserialize(string: str, rules=SERIALIZE_LIST_FULL) -> str:
+    result = string
+    for original, escaped in rules:
+        result = result.replace(escaped, original)
+    return result
+
 """
 Get all files from dir
 Output : [

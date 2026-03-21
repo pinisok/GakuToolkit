@@ -623,16 +623,10 @@ def TranslateReverseRuleKey(file_name:str, target_key:str):
 """
 Converter Helper
 """
-serialize_list = [
-    ('\r','\\r'),
-    ('\t','\\t'),
-]
+from .helper import Deserialize, SERIALIZE_LIST_BASIC
 
-def Deserialize(string:str):
-    result = string
-    for obj in serialize_list:
-        result = result.replace(obj[1], obj[0])
-    return result
+def _Deserialize(string: str) -> str:
+    return Deserialize(string, rules=SERIALIZE_LIST_BASIC)
 
 # Extend of gakumasu_diff_to_json.py at gakumas-master-translation
 def convert_yaml_types(obj):
@@ -970,9 +964,9 @@ def LoadOldKV(file_name:str) -> dict:
             continue
         # 수정해야되는 내용 수정
         if input_record["trans"].startswith("'"):
-            data[Deserialize(input_record["text"])] = Deserialize(input_record["trans"][1:])
+            data[_Deserialize(input_record["text"])] = _Deserialize(input_record["trans"][1:])
         else:
-            data[Deserialize(input_record["text"])] = Deserialize(input_record["trans"])
+            data[_Deserialize(input_record["text"])] = _Deserialize(input_record["trans"])
     return data
 """
 Converter
@@ -1090,28 +1084,24 @@ def UpdateOriginalToDrive():
             try:
                 last_update_date = datetime.fromisoformat(f.readlines()[0])
                 LOG_DEBUG(2, f"Load update date {last_update_date}")
-            except:
+            except Exception:
                 LOG_WARN(2, "Invalid masterdb cache file, skip update")
                 last_update_date = None
     LOG_DEBUG(2, "Write datetime cache file")
     with open(MASTERDB_CACHE_FILE, 'w') as f:
         f.write(datetime.today().isoformat(" "))
-    if False:
-        original_file_paths = None
-    elif last_update_date != None:
+    if last_update_date != None:
         LOG_DEBUG(2, "Check git diff")
         original_file_paths = Helper_GetFilesFromDirByDate(last_update_date, MASTERDB_ORIGINAL_PATH, ".yaml")
     else:
         original_file_paths = []
-    if original_file_paths is not None and len(original_file_paths) <= 0:
+    if len(original_file_paths) <= 0:
         LOG_INFO(2, "MasterDB is not updated, skip")
         return []
-    
-    file_list = None
-    if original_file_paths is not None:
-        file_list = []
-        for _, _, name in original_file_paths:
-            file_list.append(name[:-5])
+
+    file_list = []
+    for _, _, name in original_file_paths:
+        file_list.append(name[:-5])
     if RULES == None:
         LoadRules()
     file_list = [file_name for file_name in convert_yaml_types_in_parallel(file_list) if file_name in RULES]
@@ -1160,26 +1150,14 @@ def ConvertDriveToOutput(drive_file_paths=None, bFullUpdate=False):
     converted_file_list = []
     error_file_list = []
 
-    if False: # Use multiprocessing
-        file_list_size = len(drive_file_paths)
-        pool = multiprocessing.Pool()
-        with tqdm.tqdm(total=file_list_size) as pbar:
-            for result in pool.imap_unordered(CreateJSON_pool, [file_name for file_name in todo_list]):
-                pbar.update()
-                pbar.refresh()
-                error_file_list += result[0]
-                converted_file_list += result[1]
-        pool.close()
-        pool.join()
-    else:
-        for file_name in todo_list:
-            LOG_DEBUG(2, f"Start convert from drive to output '{file_name}'")
-            try:
-                CreateJSON(file_name)
-                converted_file_list.append(file_name)
-            except Exception as e:
-                LOG_ERROR(2, f"Error during Convert MasterDB drive to output: {e}")
-                logger.exception(e)
-                error_file_list.append((file_name, e))
+    for file_name in todo_list:
+        LOG_DEBUG(2, f"Start convert from drive to output '{file_name}'")
+        try:
+            CreateJSON(file_name)
+            converted_file_list.append(file_name)
+        except Exception as e:
+            LOG_ERROR(2, f"Error during Convert MasterDB drive to output: {e}")
+            logger.exception(e)
+            error_file_list.append((file_name, e))
 
     return error_file_list, converted_file_list

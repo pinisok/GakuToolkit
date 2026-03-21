@@ -7,26 +7,8 @@ import openpyxl
 import xlsxwriter
 
 from .helper import *
+from .helper import Serialize, Deserialize
 from .log import *
-"""
-Converter Helper
-"""
-serialize_list = [
-    ('\r','\\r'),
-    ('\r','☢'),       #Only used in generic
-    ('\t','\\t'),
-]
-def Serialize(string:str):
-    result = string
-    for obj in serialize_list:
-        result = result.replace(obj[0], obj[1])
-    return result
-
-def Deserialize(string:str):
-    result = string
-    for obj in serialize_list:
-        result = result.replace(obj[1], obj[0])
-    return result
 
 
 """

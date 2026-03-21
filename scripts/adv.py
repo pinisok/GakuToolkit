@@ -388,16 +388,13 @@ def UpdateOriginalToDrive():
             try:
                 last_update_date = datetime.fromisoformat(f.readlines()[0])
                 LOG_DEBUG(2, f"Load update date {last_update_date}")
-            except:
+            except Exception:
                 LOG_WARN(2, "Invalid adv cache file, skip update")
                 last_update_date = None
     LOG_DEBUG(2, "Write datetime cache file")
     with open(ADV_CACHE_FILE, 'w') as f:
         f.write(datetime.today().isoformat(" "))
-    if False:
-        LOG_DEBUG(2, "Full update")
-        original_file_paths = Helper_GetFilesFromDir(ADV_ORIGINAL_PATH, ".txt", "adv_")
-    elif last_update_date != None:
+    if last_update_date != None:
         LOG_DEBUG(2, "Check git diff")
         original_file_paths = Helper_GetFilesFromDirByDate(last_update_date, GIT_ADV_PATH, ".txt", "adv_")
     else:
@@ -406,42 +403,24 @@ def UpdateOriginalToDrive():
         LOG_INFO(2, "ADV is not updated, skip")
         return []
     
-    if True:
-        file_list = []
-        for abs_path, rel_path, filename in original_file_paths:
-            if filename in ADV_BLACKLIST_FILE:
-                continue
-            foldername = _internalGetOutputPath(filename)
-            if foldername in ADV_BLACKLIST_FOLDER:
-                continue
-            input_path = rel_path
-            output_path = os.path.join(ADV_DRIVE_PATH, foldername, filename[:-4]+".xlsx")
-            file_list.append((input_path, output_path, filename))
-        file_list_size = len(file_list)
-        LOG_INFO(2, f"Updating {file_list_size} adv files")
-        pool = multiprocessing.Pool()
-        for _ in tqdm.tqdm(pool.imap_unordered(TxtToXlsx_parallels, file_list), total=file_list_size):
-            pass
-        pool.close()
-        pool.join()
-        
-    else:
-        for abs_path, rel_path, filename in original_file_paths:
-            if filename in ADV_BLACKLIST_FILE:
-                continue
-            foldername = _internalGetOutputPath(filename)
-            if foldername in ADV_BLACKLIST_FOLDER:
-                continue
-            input_path = rel_path
-            output_path = os.path.join(ADV_DRIVE_PATH, foldername, filename[:-4]+".xlsx")
-            LOG_DEBUG(2, f"Start convert from drive to output '{input_path}' to '{output_path}'")
-            
-            try:
-                TxtToXlsx(input_path, output_path, filename)
-            except Exception as e:
-                LOG_ERROR(2, f"Error: {e}")
-                logger.exception(e)
-    
+    file_list = []
+    for abs_path, rel_path, filename in original_file_paths:
+        if filename in ADV_BLACKLIST_FILE:
+            continue
+        foldername = _internalGetOutputPath(filename)
+        if foldername in ADV_BLACKLIST_FOLDER:
+            continue
+        input_path = rel_path
+        output_path = os.path.join(ADV_DRIVE_PATH, foldername, filename[:-4]+".xlsx")
+        file_list.append((input_path, output_path, filename))
+    file_list_size = len(file_list)
+    LOG_INFO(2, f"Updating {file_list_size} adv files")
+    pool = multiprocessing.Pool()
+    for _ in tqdm.tqdm(pool.imap_unordered(TxtToXlsx_parallels, file_list), total=file_list_size):
+        pass
+    pool.close()
+    pool.join()
+
     return file_list
 
 
@@ -459,29 +438,14 @@ def ConvertDriveToOutput(drive_file_paths=None, bFullUpdate=False):
     converted_file_list = []
     error_file_list = []
 
-    if True: #TODO Change this when multiprocessing flag completed
-        file_list_size = len(drive_file_paths)
-        pool = multiprocessing.Pool()
-        with tqdm.tqdm(total=file_list_size) as pbar:
-            for result in pool.imap_unordered(XlsxToTxt_parallels, [(abs_path, filename) for abs_path, rel_path, filename in drive_file_paths]):
-                pbar.update()
-                pbar.refresh()
-                error_file_list += result[0]
-                converted_file_list += result[1]
-        pool.close()
-        pool.join()
-    else:
-        for abs_path, rel_path, filename in drive_file_paths:
-            input_path = abs_path
-            output_path = os.path.join(ADV_OUTPUT_PATH, filename[:-5]+".txt")
-            original_path = os.path.join(ADV_ORIGINAL_PATH, filename[:-5]+".txt")
-            LOG_DEBUG(2, f"Start convert from drive to output '{input_path}' to '{output_path}'")
-            
-            try:
-                XlsxToTxt(input_path, output_path, original_path)
-                converted_file_list.append([abs_path, rel_path, filename])
-            except Exception as e:
-                LOG_ERROR(2, f"Error during Convert ADV drive to output: {e}")
-                logger.exception(e)
-                error_file_list.append((e, filename))
+    file_list_size = len(drive_file_paths)
+    pool = multiprocessing.Pool()
+    with tqdm.tqdm(total=file_list_size) as pbar:
+        for result in pool.imap_unordered(XlsxToTxt_parallels, [(abs_path, filename) for abs_path, rel_path, filename in drive_file_paths]):
+            pbar.update()
+            pbar.refresh()
+            error_file_list += result[0]
+            converted_file_list += result[1]
+    pool.close()
+    pool.join()
     return error_file_list, converted_file_list
