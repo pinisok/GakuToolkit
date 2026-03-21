@@ -70,7 +70,7 @@ PARTICLE_PAIRS = {
 }
 
 # Dual-form notations: 이(가), 을(를), etc.
-_DUAL_FORM_PATTERN = re.compile(r'^(이)\(가\)|^(가)\(이\)|^(을)\(를\)|^(를)\(을\)|^(은)\(는\)|^(는)\(은\)|^(와)\(과\)|^(과)\(와\)')
+_DUAL_FORM_PATTERN = re.compile(r'^(이)\(가\)|^(가)\(이\)|^(을)\(를\)|^(를)\(을\)|^(은)\(는\)|^(는)\(은\)|^(와)\(과\)|^(과)\(와\)|^(로)\(으로\)|^(으로)\(로\)')
 
 # Words that START with particle-like characters but are NOT particles
 _FALSE_PARTICLE_WORDS = re.compile(

@@ -275,3 +275,15 @@ class TestAdjustBoundary:
     def test_dual_form_eul_reul(self):
         prev, next_text = adjust_boundary("원기", "을(를) 소비")
         assert next_text == "를 소비"
+
+    def test_dual_form_ro_euro_vowel(self):
+        prev, next_text = adjust_boundary("원기", "으로(로) 변경")
+        assert next_text == "로 변경"
+
+    def test_dual_form_ro_euro_consonant(self):
+        prev, next_text = adjust_boundary("집중", "로(으로) 변경")
+        assert next_text == "으로 변경"
+
+    def test_dual_form_ro_euro_rieul(self):
+        prev, next_text = adjust_boundary("스킬", "으로(로) 변경")
+        assert next_text == "로 변경"
