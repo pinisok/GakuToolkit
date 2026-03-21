@@ -48,14 +48,17 @@ def Convert(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True, bFullUpdat
 def Update(ADV=True, MASTERDB=True, bFullUpdate=False):
     ADV_FILE = []
     MASTERDB_FILE = []
+    all_warnings = {}
     if ADV:
         LOG_INFO(1, "Updating ADV")
-        ADV_FILE = adv.UpdateOriginalToDrive()
+        ADV_FILE, adv_warnings = adv.UpdateOriginalToDrive()
+        all_warnings.update(adv_warnings)
     if MASTERDB:
         LOG_INFO(1, "Updating MasterDB")
-        MASTERDB_FILE = masterdb2.UpdateOriginalToDrive()
+        MASTERDB_FILE, mdb_warnings = masterdb2.UpdateOriginalToDrive()
+        all_warnings.update(mdb_warnings)
 
-    return ADV_FILE, MASTERDB_FILE
+    return ADV_FILE, MASTERDB_FILE, all_warnings
     
 def getDriveUrl(file):
     try:
@@ -77,7 +80,9 @@ def _convert_summary(NAME, ARR):
             for fn in ARR[1]:
                 LOG_INFO(2, f"{fn} 번역 갱신")
 
-def _update_summary(NAME, ARR):
+def _update_summary(NAME, ARR, warnings=None):
+    if warnings is None:
+        warnings = {}
     if len(ARR) > 0:
         LOG_INFO(1, NAME)
         ARR.sort()
@@ -86,6 +91,12 @@ def _update_summary(NAME, ARR):
                 LOG_INFO(2, f"업데이트 : '{getDriveUrl(fn)}'")
             if fn[0] == "+":
                 LOG_INFO(2, f"추가 : '{getDriveUrl(fn)}'")
+            # 해당 파일의 경고 출력
+            file_path = fn[1] if len(fn) > 1 else ""
+            for wkey, wlist in warnings.items():
+                if wkey in file_path:
+                    for w in wlist:
+                        LOG_INFO(3, f"⚠ {w}")
 def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
     from scripts import sync
 
@@ -102,9 +113,10 @@ def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
     # Phase 3: Upload to Google Drive
     U_UPLOAD_ADV = []
     U_UPLOAD_MASTERDB = []
+    update_warnings = {}
     if UPDATE:
         LOG_INFO(0, "Phase 2: Update")
-        Update(ADV, MASTERDB, full_update)
+        _, _, update_warnings = Update(ADV, MASTERDB, full_update)
 
         LOG_INFO(0, "Phase 3: Upload to Drive")
         U_UPLOAD_ADV, U_UPLOAD_MASTERDB = sync.upload_all(ADV, MASTERDB)
@@ -118,8 +130,8 @@ def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
             has_changes = True
             LOG_INFO(0, "---------------- 업데이트된 파일 요약 ----------------")
 
-            _update_summary("ADV", U_UPLOAD_ADV)
-            _update_summary("MASTERDB", U_UPLOAD_MASTERDB)
+            _update_summary("ADV", U_UPLOAD_ADV, update_warnings)
+            _update_summary("MASTERDB", U_UPLOAD_MASTERDB, update_warnings)
 
             LOG_INFO(0, "----------------------------------------------------------")
         else:

@@ -134,7 +134,7 @@ class TestUpdateDataFrame:
         ])
 
         with open(xlsx_path, "rb") as fp:
-            result_df = _internalUpdateDataFrame(new_df, fp)
+            result_df, _ = _internalUpdateDataFrame(new_df, fp)
 
         records = result_df.to_dict(orient="records")
         # Should preserve the original translation
@@ -155,7 +155,7 @@ class TestUpdateDataFrame:
         ])
 
         with open(xlsx_path, "rb") as fp:
-            result_df = _internalUpdateDataFrame(new_df, fp)
+            result_df, _ = _internalUpdateDataFrame(new_df, fp)
 
         records = result_df.to_dict(orient="records")
         assert records[0]["translated text"] == "이전 번역"
@@ -177,7 +177,7 @@ class TestUpdateDataFrame:
         ])
 
         with open(xlsx_path, "rb") as fp:
-            result_df = _internalUpdateDataFrame(new_df, fp)
+            result_df, _ = _internalUpdateDataFrame(new_df, fp)
 
         records = result_df.to_dict(orient="records")
         assert len(records) == 2

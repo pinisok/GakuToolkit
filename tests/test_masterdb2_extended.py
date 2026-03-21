@@ -424,7 +424,7 @@ class TestUpdateXlsx:
         mdb2.MASTERDB_DRIVE_PATH = str(tmp_path / "drive1")
         try:
             from scripts.masterdb2 import UpdateXlsx
-            empty_count = UpdateXlsx("Achievement")
+            empty_count, _ = UpdateXlsx("Achievement")
         finally:
             mdb2.MASTERDB_JSON_PATH = saved["json"]
             mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
@@ -476,7 +476,7 @@ class TestUpdateXlsx:
         mdb2.MASTERDB_DRIVE_PATH = str(tmp_path / "drive1")
         try:
             from scripts.masterdb2 import UpdateXlsx
-            UpdateXlsx("Achievement")
+            UpdateXlsx("Achievement")  # returns (count, warnings)
         finally:
             mdb2.MASTERDB_JSON_PATH = saved["json"]
             mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]

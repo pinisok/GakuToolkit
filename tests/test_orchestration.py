@@ -211,6 +211,47 @@ class TestUpdateSummary:
         assert any("업데이트" in m for m in messages)
         assert any("추가" in m for m in messages)
 
+    def test_warnings_shown_under_file(self, caplog):
+        """Warnings should appear under the corresponding file entry."""
+        from main import _update_summary
+
+        arr = [["*", "cidol/adv_cidol-amao_01.xlsx"]]
+        warnings = {"adv_cidol-amao_01": ["원문 불일치 at line 5", "원문 불일치 at line 12"]}
+
+        with caplog.at_level(logging.INFO, logger="GakuToolkit"):
+            _update_summary("ADV", arr, warnings)
+
+        messages = [r.message for r in caplog.records]
+        assert any("업데이트" in m for m in messages)
+        assert any("⚠ 원문 불일치 at line 5" in m for m in messages)
+        assert any("⚠ 원문 불일치 at line 12" in m for m in messages)
+
+    def test_warnings_not_shown_for_other_file(self, caplog):
+        """Warnings for a different file should not appear."""
+        from main import _update_summary
+
+        arr = [["*", "other/file.xlsx"]]
+        warnings = {"adv_cidol-amao_01": ["원문 불일치 at line 5"]}
+
+        with caplog.at_level(logging.INFO, logger="GakuToolkit"):
+            _update_summary("ADV", arr, warnings)
+
+        messages = [r.message for r in caplog.records]
+        assert not any("⚠" in m for m in messages)
+
+    def test_no_warnings_still_works(self, caplog):
+        """Summary without warnings should work as before."""
+        from main import _update_summary
+
+        arr = [["*", "file.xlsx"]]
+
+        with caplog.at_level(logging.INFO, logger="GakuToolkit"):
+            _update_summary("ADV", arr)
+
+        messages = [r.message for r in caplog.records]
+        assert any("업데이트" in m for m in messages)
+        assert not any("⚠" in m for m in messages)
+
 
 # ============================================================
 # main() Phase execution

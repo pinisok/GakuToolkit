@@ -442,12 +442,14 @@ Converter
 """
 UPDATE_TIMESTAMP = datetime.today().isoformat(" ")
 # Update xlsx with gakumas-diff json
-def UpdateXlsx(file_name:str) -> int:
+def UpdateXlsx(file_name:str):
+    """Returns (empty_value_count, warnings_list)."""
     with db_session():
         return _UpdateXlsx(file_name)
 
-def _UpdateXlsx(file_name:str) -> int:
+def _UpdateXlsx(file_name:str):
     empty_value_counter = 0
+    warnings = []
     record_structure = GetRecordStructure(file_name)
     
     kr_data_records = ReadXlsx(file_name)
@@ -504,22 +506,24 @@ def _UpdateXlsx(file_name:str) -> int:
             else:
                 jp_record["_GAKU_TOUCHED"] = True
                 kr_data_records.insert(kr_target_idx+1, jp_record)
-                LOG_WARN(2, f"Find new record inside on {kr_target_idx+1} : '{jp_record}' at '{kr_data_records[kr_target_idx]}'")
+                warnings.append(f"신규 레코드 추가 at {kr_target_idx+1}")
+                LOG_WARN(2, f"[{file_name}] Find new record inside on {kr_target_idx+1}")
     # Collect unused data
     kr_unused_list = [(idx,record) for idx, record in enumerate(kr_data_records) if "_GAKU_TOUCHED" not in record]
     for kr_idx, record in kr_unused_list:
-        LOG_WARN(2, f"Unused record[{kr_idx}] : {record}")
-        # record["설명"] = "미사용 : " + UPDATE_TIMESTAMP
+        warnings.append(f"미사용 레코드 삭제 [{kr_idx}]")
+        LOG_WARN(2, f"[{file_name}] Unused record[{kr_idx}]")
         kr_data_records.remove(record)
     for record in kr_data_records:
         if "_GAKU_TOUCHED" in record:
             record.pop("_GAKU_TOUCHED")
         if record["번역"] == "":
             record["번역"] = DB_get(record["원문"])
-            LOG_WARN(2, f"Find old untranslated record and use db : {record}")
+            warnings.append(f"미번역 레코드 DB 폴백")
+            LOG_WARN(2, f"[{file_name}] Find old untranslated record, using DB cache")
 
     WriteXlsx(file_name, kr_data_records)
-    return empty_value_counter
+    return empty_value_counter, warnings
 
 def CreateJSON(file_name):
     kr_data_records = ReadXlsx(file_name)
@@ -557,19 +561,22 @@ def _filter_masterdb_files(file_paths):
 
 
 def _update_masterdb_xlsx_batch(file_list):
-    """Run UpdateXlsx for each file. Returns total empty (untranslated) count."""
+    """Run UpdateXlsx for each file. Returns (empty_count, all_warnings)."""
     empty_value_count = 0
+    all_warnings = {}
     for idx, file_name in enumerate(file_list):
         _empty_value_count = 0
         try:
             LOG_DEBUG(2, f"Converting {file_name}...({idx}/{len(file_list)})")
-            _empty_value_count = UpdateXlsx(file_name)
+            _empty_value_count, file_warnings = UpdateXlsx(file_name)
             LOG_DEBUG(2, f"Untranslated values : {_empty_value_count}")
+            if file_warnings:
+                all_warnings[file_name] = file_warnings
         except Exception as e:
             LOG_ERROR(2, f"Error {e}")
             logger.exception(e)
         empty_value_count += _empty_value_count
-    return empty_value_count
+    return empty_value_count, all_warnings
 
 
 def _convert_masterdb_batch(todo_list):
@@ -603,14 +610,14 @@ def UpdateOriginalToDrive():
         original_file_paths = []
     if len(original_file_paths) <= 0:
         LOG_INFO(2, "MasterDB is not updated, skip")
-        return []
+        return [], {}
 
     file_list = _filter_masterdb_files(original_file_paths)
     LOG_INFO(2, f"Updating {len(file_list)} MasterDB files")
-    empty_value_count = _update_masterdb_xlsx_batch(file_list)
+    empty_value_count, all_warnings = _update_masterdb_xlsx_batch(file_list)
     LOG_DEBUG(2, f"Sum of untranslated values : {empty_value_count}")
 
-    return file_list
+    return file_list, all_warnings
 
 
 # Google Drive > GakumasTranslationDataKor

@@ -145,16 +145,20 @@ def _internalCsvToDataFrame(read_fp):
     adv_dataframe['text'] = adv_dataframe['text'].str.replace("\\n", "\n")
     return adv_dataframe
 
-def _internalUpdateDataFrame(new_dataframe:pd.DataFrame, original_fp):
+def _internalUpdateDataFrame(new_dataframe:pd.DataFrame, original_fp, file_name=""):
+    """Merge new source DataFrame with existing translated xlsx.
+    Returns (DataFrame, warnings_list)."""
     orig_dataframe = _internalReadXlsx(original_fp)
     orig_records = orig_dataframe.to_dict(orient='records')
     new_records = new_dataframe.to_dict(orient='records')
+    warnings = []
     bOverride = False
 
     orig_records_length = len(orig_records)
     new_records_length = len(new_records)
     if orig_records_length != new_records_length:
         bOverride = True
+        warnings.append(f"줄 수 변경 ({orig_records_length} → {new_records_length})")
 
     for idx in range(len(new_records)):
         if idx >= orig_records_length:
@@ -171,12 +175,12 @@ def _internalUpdateDataFrame(new_dataframe:pd.DataFrame, original_fp):
             new_records[idx]["translated name"] = orig_records[idx]["translated name"]
             new_records[idx]["translated text"] = orig_records[idx]["translated text"]
             if new_records[idx]["text"] != orig_records[idx]["text"]:
-                diff = difflib.ndiff(orig_records[idx]["text"], new_records[idx]["text"])
-                LOG_WARN(0, f"Unmatch original text at line {idx} : {float(len(list(diff)) / len(new_records[idx]['text'])):.02f}")
+                warnings.append(f"원문 불일치 at line {idx}")
+                LOG_WARN(0, f"[{file_name}] Unmatch original text at line {idx}")
                 LOG_WARN(0, f"'{new_records[idx]['text']}' : '{orig_records[idx]['text']}'")
                 new_records[idx]["comments"] = "원본 문자열이 수정되었습니다. 번역값이 적절한지 확인 후 해당 문구를 삭제해주세요"
-        return pd.DataFrame.from_dict(new_records)
-    return pd.DataFrame.from_dict(orig_records)
+        return pd.DataFrame.from_dict(new_records), warnings
+    return pd.DataFrame.from_dict(orig_records), warnings
 
 def _internalDataFrameToXlsx(dataframe, write_fp):
     writer = pd.ExcelWriter(write_fp, engine="xlsxwriter") 
@@ -335,27 +339,32 @@ def XlsxToTxt(input_path, write_path, original_path):
 def TxtToXlsx_parallels(obj):
     input_path, output_path, filename = obj
     try:
-        TxtToXlsx(input_path, output_path, filename)
+        warnings = TxtToXlsx(input_path, output_path, filename)
+        return {filename: warnings} if warnings else {}
     except Exception as e:
         LOG_ERROR(2, f"Error: {e}")
         logger.exception(e)
+        return {}
 
 
 def TxtToXlsx(input_path, output_path, file_name:str):
+    """Convert TXT to XLSX. Returns list of warnings (may be empty)."""
     with open(input_path, "r", encoding="utf-8") as input_fp:
         csv = _internalTxtToScv(input_fp, file_name)
     dataframe = _internalCsvToDataFrame(csv)
-    
+    warnings = []
+
     if(os.path.exists(output_path)):
         original_fp = open(output_path, "rb")
         LOG_DEBUG(4, f"Try to update original file")
-        dataframe = _internalUpdateDataFrame(dataframe, original_fp)
+        dataframe, warnings = _internalUpdateDataFrame(dataframe, original_fp, file_name)
         original_fp.close()
 
     LOG_DEBUG(4, f"Write result to file")
     write_fp = open(output_path, "wb")
     _internalDataFrameToXlsx(dataframe, write_fp)
     write_fp.close()
+    return warnings
 
 
 """
@@ -446,17 +455,18 @@ def UpdateOriginalToDrive():
         original_file_paths = []
     if len(original_file_paths) <= 0:
         LOG_INFO(2, "ADV is not updated, skip")
-        return []
+        return [], {}
 
     file_list = _filter_adv_files(original_file_paths)
     LOG_INFO(2, f"Updating {len(file_list)} adv files")
+    all_warnings = {}
     pool = multiprocessing.Pool()
-    for _ in tqdm.tqdm(pool.imap_unordered(TxtToXlsx_parallels, file_list), total=len(file_list)):
-        pass
+    for result in tqdm.tqdm(pool.imap_unordered(TxtToXlsx_parallels, file_list), total=len(file_list)):
+        all_warnings.update(result)
     pool.close()
     pool.join()
 
-    return file_list
+    return file_list, all_warnings
 
 
 # 번역 수정사항 반영
