@@ -566,3 +566,180 @@ class TestLogModule:
         AddLogHandler(handler)
         assert handler in logger.handlers
         logger.removeHandler(handler)
+
+
+# ============================================================
+# OverrideRecordToJson — traverse branch coverage
+# ============================================================
+
+
+class TestOverrideTraverseBranches:
+    """Cover internal traverse() branches in OverrideRecordToJson."""
+
+    def test_indexed_string_element(self, shelve_test_cleanup):
+        """Override a string element at items[1] (indexed string branch)."""
+        json_data = {
+            "rules": {"primaryKeys": ["id"]},
+            "data": [
+                {"id": "x", "items": [
+                    {"text": "アイテム0"},
+                    {"text": "アイテム1"},
+                ]},
+            ],
+        }
+        records = [
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "x",
+             "ID": "items[1].text", "원문": "アイテム1", "번역": "아이템1", "설명": ""},
+        ]
+        result = OverrideRecordToJson(json_data, records)
+        assert result["data"][0]["items"][1]["text"] == "아이템1"
+        assert result["data"][0]["items"][0]["text"] == "アイテム0"
+
+    def test_indexed_string_mismatch_not_overridden(self, shelve_test_cleanup):
+        """Mismatched original text at indexed path should not override."""
+        json_data = {
+            "rules": {"primaryKeys": ["id"]},
+            "data": [
+                {"id": "x", "items": [{"text": "実際"}]},
+            ],
+        }
+        records = [
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "x",
+             "ID": "items[0].text", "원문": "間違い", "번역": "잘못", "설명": ""},
+        ]
+        result = OverrideRecordToJson(json_data, records)
+        assert result["data"][0]["items"][0]["text"] == "実際"
+
+    def test_indexed_nested_dict_with_string(self, shelve_test_cleanup):
+        """Override a string field inside an indexed nested dict."""
+        json_data = {
+            "rules": {"primaryKeys": ["id"]},
+            "data": [
+                {"id": "x", "steps": [
+                    {"label": "ステップ1"},
+                    {"label": "ステップ2"},
+                ]},
+            ],
+        }
+        records = [
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "x",
+             "ID": "steps[0].label", "원문": "ステップ1", "번역": "스텝1", "설명": ""},
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "x",
+             "ID": "steps[1].label", "원문": "ステップ2", "번역": "스텝2", "설명": ""},
+        ]
+        result = OverrideRecordToJson(json_data, records)
+        assert result["data"][0]["steps"][0]["label"] == "스텝1"
+        assert result["data"][0]["steps"][1]["label"] == "스텝2"
+
+    def test_replaces_across_multiple_matching_data(self, shelve_test_cleanup):
+        """Same primary key appearing in multiple data items."""
+        json_data = {
+            "rules": {"primaryKeys": ["type"]},
+            "data": [
+                {"type": "A", "name": "名前"},
+                {"type": "A", "name": "名前"},
+            ],
+        }
+        records = [
+            {"IMAGE": "", "KEY ID 0": "type", "KEY VALUE 0": "A",
+             "ID": "name", "원문": "名前", "번역": "이름", "설명": ""},
+        ]
+        result = OverrideRecordToJson(json_data, records)
+        assert result["data"][0]["name"] == "이름"
+        assert result["data"][1]["name"] == "이름"
+
+    def test_nested_dict_traversal(self, shelve_test_cleanup):
+        """Traverse through nested dict without index."""
+        json_data = {
+            "rules": {"primaryKeys": ["id"]},
+            "data": [
+                {"id": "x", "outer": {"inner": {"deep": "深い"}}},
+            ],
+        }
+        records = [
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "x",
+             "ID": "outer.inner.deep", "원문": "深い", "번역": "깊은", "설명": ""},
+        ]
+        result = OverrideRecordToJson(json_data, records)
+        assert result["data"][0]["outer"]["inner"]["deep"] == "깊은"
+
+
+# ============================================================
+# TranslateRuleKey / TranslateReverseRuleKey
+# ============================================================
+
+
+class TestTranslateRuleKey:
+    """Test rule key translation functions."""
+
+    def test_translates_known_field(self):
+        from scripts.masterdb2_rules import TranslateRuleKey
+        result = TranslateRuleKey("Achievement", "name")
+        assert result == "이름"
+
+    def test_unknown_field_returns_original(self):
+        from scripts.masterdb2_rules import TranslateRuleKey
+        result = TranslateRuleKey("Achievement", "unknownField")
+        assert result == "unknownField"
+
+    def test_dotted_path(self):
+        from scripts.masterdb2_rules import TranslateRuleKey
+        result = TranslateRuleKey("Achievement", "name.description")
+        assert "이름" in result
+        assert "설명" in result
+
+    def test_empty_value_returns_key(self):
+        """Fields mapped to '' should return the original key."""
+        from scripts.masterdb2_rules import TranslateRuleKey
+        # CharacterDetail.order maps to ""
+        result = TranslateRuleKey("CharacterDetail", "order")
+        assert result == "order"
+
+
+class TestConvertDriveToOutputGeneric:
+    """Test generic.ConvertDriveToOutput with synthetic drive files."""
+
+    def test_converts_single_file(self, tmp_path):
+        """Pass a single synthetic file to ConvertDriveToOutput."""
+        from tests.fixtures.create_fixtures import create_generic_xlsx
+        import scripts.generic as generic
+
+        xlsx_path = str(tmp_path / "generic.xlsx")
+        create_generic_xlsx(xlsx_path, [
+            {"text": "テスト", "trans": "테스트"},
+        ])
+
+        saved = generic.GENERIC_OUTPUT_PATH
+        output_dir = str(tmp_path / "output")
+        os.makedirs(output_dir, exist_ok=True)
+        generic.GENERIC_OUTPUT_PATH = output_dir
+
+        try:
+            drive_file_paths = [(xlsx_path, "/generic.xlsx", "generic.xlsx")]
+            errors, successes = generic.ConvertDriveToOutput(drive_file_paths)
+        finally:
+            generic.GENERIC_OUTPUT_PATH = saved
+
+        assert len(errors) == 0
+        assert len(successes) == 1
+
+    def test_handles_conversion_error(self, tmp_path):
+        """Invalid xlsx should produce error, not crash."""
+        import scripts.generic as generic
+
+        bad_path = str(tmp_path / "bad.xlsx")
+        with open(bad_path, "w") as f:
+            f.write("not an xlsx")
+
+        saved = generic.GENERIC_OUTPUT_PATH
+        generic.GENERIC_OUTPUT_PATH = str(tmp_path / "output")
+        os.makedirs(generic.GENERIC_OUTPUT_PATH, exist_ok=True)
+
+        try:
+            drive_file_paths = [(bad_path, "/bad.xlsx", "bad.xlsx")]
+            errors, successes = generic.ConvertDriveToOutput(drive_file_paths)
+        finally:
+            generic.GENERIC_OUTPUT_PATH = saved
+
+        assert len(errors) == 1
+        assert len(successes) == 0
