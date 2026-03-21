@@ -6,33 +6,16 @@ Download (Phase 0) and Upload (Phase 3) run independently.
 """
 
 from . import rclone
-from .helper import (
-    Helper_GetFilesFromDir,
-    Helper_GetFilesFromDirByCheck,
+from .helper import Helper_GetFilesFromDir, Helper_GetFilesFromDirByCheck
+from .paths import (
     DRIVE_PATH,
-    REMOTE_PATH,
+    ADV_REMOTE_PATH, ADV_DRIVE_PATH,
+    MASTERDB2_REMOTE_PATH, MASTERDB2_DRIVE_PATH,
+    GENERIC_REMOTE_PATH, GENERIC_DRIVE_PATH,
+    GENERIC_REMOTE_LYRICS_PATH, GENERIC_DRIVE_LYRICS_PATH, GENERIC_FILE_LIST,
+    LOCALIZATION_FILE, LOCALIZATION_REMOTE_PATH, LOCALIZATION_DRIVE_PATH,
 )
 from .log import *
-
-# ADV paths
-ADV_REMOTE_PATH = REMOTE_PATH + "/text assets"
-ADV_DRIVE_PATH = DRIVE_PATH + "/text assets"
-
-# MasterDB2 paths
-MASTERDB2_REMOTE_PATH = REMOTE_PATH + "/masterDB2"
-MASTERDB2_DRIVE_PATH = DRIVE_PATH + "/masterDB2"
-
-# Generic paths
-GENERIC_REMOTE_PATH = REMOTE_PATH + "/GenericTrans"
-GENERIC_DRIVE_PATH = DRIVE_PATH + "/GenericTrans"
-GENERIC_REMOTE_LYRICS_PATH = GENERIC_REMOTE_PATH + "/lyrics"
-GENERIC_DRIVE_LYRICS_PATH = GENERIC_DRIVE_PATH + "/lyrics"
-GENERIC_FILE_LIST = ["/generic.xlsx", "/generic.fmt.xlsx"]
-
-# Localization paths
-LOCALIZATION_FILE = "/localization.xlsx"
-LOCALIZATION_REMOTE_PATH = REMOTE_PATH + LOCALIZATION_FILE
-LOCALIZATION_DRIVE_PATH = DRIVE_PATH + LOCALIZATION_FILE
 
 
 def download_all(bFullUpdate=False, ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):

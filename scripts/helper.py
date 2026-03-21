@@ -3,12 +3,10 @@ from datetime import date
 
 from .log import *
 
-DEFAULT_PATH = os.getcwd()
-REMOTE_PATH = "gakumas:Gakumas_KR"
-DRIVE_PATH = DEFAULT_PATH + "/res/drive"
-TEMP_PATH = DEFAULT_PATH + "/temp"
-OUTPUT_PATH = DEFAULT_PATH + "/output"
-GIT_MASTERDB_PATH = DEFAULT_PATH + "/res/masterdb"
+from .paths import (
+    DEFAULT_PATH, REMOTE_PATH, DRIVE_PATH, TEMP_PATH, OUTPUT_PATH,
+    GIT_MASTERDB_PATH,
+)
 
 CHARACTER_REGEX_TRANS_MAP = {
     "麻央":"마오",

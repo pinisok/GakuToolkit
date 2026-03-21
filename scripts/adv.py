@@ -370,13 +370,10 @@ Folder Processor
 """
 
 
-GIT_ADV_PATH = DEFAULT_PATH + "/res/adv"
-ADV_ORIGINAL_PATH = GIT_ADV_PATH + "/Resource"
-ADV_REMOTE_PATH = REMOTE_PATH + "/text assets"
-ADV_DRIVE_PATH = DRIVE_PATH + "/text assets"
-ADV_TEMP_PATH = TEMP_PATH + "/adv"
-ADV_OUTPUT_PATH = OUTPUT_PATH + "/local-files/resource"
-ADV_CACHE_FILE = "./cache/adv_update_date.txt"
+from .paths import (
+    GIT_ADV_PATH, ADV_ORIGINAL_PATH, ADV_REMOTE_PATH, ADV_DRIVE_PATH,
+    ADV_TEMP_PATH, ADV_OUTPUT_PATH, ADV_CACHE_FILE,
+)
 
 # 업데이트 반영
 # Campus-Adv-txts > Google Drive
