@@ -1,0 +1,199 @@
+"""Tests for scripts/helper.py utility functions."""
+
+import os
+import tempfile
+
+import pytest
+
+from scripts.helper import (
+    Helper_GetFilesFromDir,
+    Helper_GetFilesFromDirByCheck,
+    CHARACTER_REGEX_TRANS_MAP,
+    REGEX_DOTS_3,
+    REGEX_DOTS_4_TO_6,
+)
+
+
+class TestHelperGetFilesFromDir:
+    """Tests for Helper_GetFilesFromDir."""
+
+    def test_finds_files_with_suffix(self, tmp_path):
+        (tmp_path / "file1.txt").write_text("a")
+        (tmp_path / "file2.txt").write_text("b")
+        (tmp_path / "file3.json").write_text("c")
+
+        result = Helper_GetFilesFromDir(str(tmp_path), suffix=".txt")
+
+        filenames = [r[2] for r in result]
+        assert "file1.txt" in filenames
+        assert "file2.txt" in filenames
+        assert "file3.json" not in filenames
+
+    def test_finds_files_with_prefix(self, tmp_path):
+        (tmp_path / "adv_test.txt").write_text("a")
+        (tmp_path / "other_test.txt").write_text("b")
+
+        result = Helper_GetFilesFromDir(str(tmp_path), prefix="adv_")
+
+        filenames = [r[2] for r in result]
+        assert "adv_test.txt" in filenames
+        assert "other_test.txt" not in filenames
+
+    def test_finds_files_with_both_filters(self, tmp_path):
+        (tmp_path / "adv_test.txt").write_text("a")
+        (tmp_path / "adv_test.json").write_text("b")
+        (tmp_path / "other.txt").write_text("c")
+
+        result = Helper_GetFilesFromDir(str(tmp_path), suffix=".txt", prefix="adv_")
+
+        filenames = [r[2] for r in result]
+        assert filenames == ["adv_test.txt"]
+
+    def test_recurses_subdirectories(self, tmp_path):
+        sub = tmp_path / "subdir"
+        sub.mkdir()
+        (sub / "nested.txt").write_text("a")
+        (tmp_path / "top.txt").write_text("b")
+
+        result = Helper_GetFilesFromDir(str(tmp_path), suffix=".txt")
+
+        filenames = [r[2] for r in result]
+        assert "nested.txt" in filenames
+        assert "top.txt" in filenames
+
+    def test_returns_empty_for_no_matches(self, tmp_path):
+        (tmp_path / "file.json").write_text("a")
+
+        result = Helper_GetFilesFromDir(str(tmp_path), suffix=".txt")
+
+        assert result == []
+
+    def test_returns_tuple_of_three(self, tmp_path):
+        (tmp_path / "test.txt").write_text("a")
+
+        result = Helper_GetFilesFromDir(str(tmp_path), suffix=".txt")
+
+        assert len(result) == 1
+        abs_path, rel_path, filename = result[0]
+        assert os.path.isabs(abs_path)
+        assert filename == "test.txt"
+
+    def test_no_filters_returns_all(self, tmp_path):
+        (tmp_path / "a.txt").write_text("a")
+        (tmp_path / "b.json").write_text("b")
+
+        result = Helper_GetFilesFromDir(str(tmp_path))
+
+        assert len(result) == 2
+
+
+class TestHelperGetFilesFromDirByCheck:
+    """Tests for Helper_GetFilesFromDirByCheck."""
+
+    def test_filters_deleted_files(self, tmp_path):
+        (tmp_path / "modified.xlsx").write_text("a")
+        (tmp_path / "deleted.xlsx").write_text("b")
+
+        check_result = [
+            ["*", "modified.xlsx"],
+            ["-", "deleted.xlsx"],
+        ]
+
+        result = Helper_GetFilesFromDirByCheck(check_result, str(tmp_path))
+
+        filenames = [r[2] for r in result]
+        assert "modified.xlsx" in filenames
+        assert "deleted.xlsx" not in filenames
+
+    def test_includes_new_and_modified(self, tmp_path):
+        (tmp_path / "new.xlsx").write_text("a")
+        (tmp_path / "mod.xlsx").write_text("b")
+
+        check_result = [
+            ["+", "new.xlsx"],
+            ["*", "mod.xlsx"],
+        ]
+
+        result = Helper_GetFilesFromDirByCheck(check_result, str(tmp_path))
+
+        filenames = [r[2] for r in result]
+        assert "new.xlsx" in filenames
+        assert "mod.xlsx" in filenames
+
+    def test_applies_suffix_filter(self, tmp_path):
+        (tmp_path / "file.xlsx").write_text("a")
+        (tmp_path / "file.txt").write_text("b")
+
+        check_result = [
+            ["*", "file.xlsx"],
+            ["*", "file.txt"],
+        ]
+
+        result = Helper_GetFilesFromDirByCheck(
+            check_result, str(tmp_path), suffix=".xlsx"
+        )
+
+        filenames = [r[2] for r in result]
+        assert "file.xlsx" in filenames
+        assert "file.txt" not in filenames
+
+    def test_applies_prefix_filter(self, tmp_path):
+        (tmp_path / "adv_file.xlsx").write_text("a")
+        (tmp_path / "other.xlsx").write_text("b")
+
+        check_result = [
+            ["*", "adv_file.xlsx"],
+            ["*", "other.xlsx"],
+        ]
+
+        result = Helper_GetFilesFromDirByCheck(
+            check_result, str(tmp_path), prefix="adv_"
+        )
+
+        filenames = [r[2] for r in result]
+        assert "adv_file.xlsx" in filenames
+        assert "other.xlsx" not in filenames
+
+    def test_empty_check_result(self, tmp_path):
+        result = Helper_GetFilesFromDirByCheck([], str(tmp_path))
+        assert result == []
+
+
+class TestCharacterTransMap:
+    """Tests for CHARACTER_REGEX_TRANS_MAP."""
+
+    def test_map_has_entries(self):
+        assert len(CHARACTER_REGEX_TRANS_MAP) > 0
+
+    def test_all_values_are_korean(self):
+        for jp, kr in CHARACTER_REGEX_TRANS_MAP.items():
+            assert len(kr) > 0, f"Empty translation for {jp}"
+
+    def test_known_translations(self):
+        assert CHARACTER_REGEX_TRANS_MAP["麻央"] == "마오"
+        assert CHARACTER_REGEX_TRANS_MAP["ことね"] == "코토네"
+        assert CHARACTER_REGEX_TRANS_MAP["手毬"] == "테마리"
+
+    def test_fallback_for_unknown(self):
+        unknown = "UnknownCharacter"
+        result = CHARACTER_REGEX_TRANS_MAP.get(unknown, unknown)
+        assert result == unknown
+
+
+class TestRegexPatterns:
+    """Tests for dot replacement regex patterns."""
+
+    def test_4_to_6_dots_replaced(self):
+        assert REGEX_DOTS_4_TO_6.sub("……", "test....end") == "test……end"
+        assert REGEX_DOTS_4_TO_6.sub("……", "test.....end") == "test……end"
+        assert REGEX_DOTS_4_TO_6.sub("……", "test......end") == "test……end"
+
+    def test_3_dots_not_matched_by_4_to_6(self):
+        assert REGEX_DOTS_4_TO_6.sub("……", "test...end") == "test...end"
+
+    def test_2_to_3_dots_replaced(self):
+        assert REGEX_DOTS_3.sub("…", "test..end") == "test…end"
+        assert REGEX_DOTS_3.sub("…", "test...end") == "test…end"
+
+    def test_single_dot_not_replaced(self):
+        assert REGEX_DOTS_3.sub("…", "test.end") == "test.end"
