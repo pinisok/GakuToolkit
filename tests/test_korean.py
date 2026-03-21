@@ -80,6 +80,12 @@ class TestLastKoreanChar:
         assert last_korean_char("100%") is None
         assert last_korean_char("1.3") is None
 
+    def test_multi_word_with_space(self):
+        """Should return last Korean char even with spaces between words."""
+        assert last_korean_char("직접 효과") == "과"
+        assert last_korean_char("트러블 카드") == "드"
+        assert last_korean_char("액티브 스킬 카드") == "드"
+
     def test_mixed(self):
         """Mixed content should find last Korean char."""
         assert last_korean_char("레슨 CLEAR") == "슨"

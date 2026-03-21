@@ -590,6 +590,36 @@ def _match_kr_record(jp_record, jp_keys, candidates):
     return kr_target_idx, kr_target_record
 
 
+def _find_prev_record(record, all_records, field_name, idx):
+    """Find the previous array element's record object in all_records.
+
+    Returns the record dict (mutable reference) or None.
+    """
+    if idx <= 0:
+        return None
+
+    prev_key_id = f"{field_name}[{idx - 1}].text"
+    pk_fields = {}
+    i = 0
+    while f"KEY ID {i}" in record:
+        pk_fields[record[f"KEY ID {i}"]] = record[f"KEY VALUE {i}"]
+        i += 1
+
+    for r in all_records:
+        if r.get("ID") != prev_key_id:
+            continue
+        match = True
+        j = 0
+        while f"KEY ID {j}" in r:
+            if r.get(f"KEY VALUE {j}") != pk_fields.get(r.get(f"KEY ID {j}")):
+                match = False
+                break
+            j += 1
+        if match:
+            return r
+    return None
+
+
 def _apply_particle_correction(record, all_records, json_data):
     """Apply Korean particle correction to a DB-filled translation.
 
@@ -598,9 +628,10 @@ def _apply_particle_correction(record, all_records, json_data):
     - record has a non-empty translation
     - previous array element can be found
 
-    Mutates record["번역"] in place. Returns True if correction was applied.
+    Mutates record["번역"] in place. Also strips trailing space from
+    the previous record's translation if needed. Returns True if correction applied.
     """
-    from .korean import adjust_boundary, last_korean_char
+    from .korean import adjust_boundary
 
     translation = record.get("번역", "")
     if not translation:
@@ -611,16 +642,29 @@ def _apply_particle_correction(record, all_records, json_data):
         return False
 
     field_name, idx = parsed
+
+    # Get prev text for boundary adjustment
     prev_text = _get_prev_array_element(record, all_records, field_name, idx, json_data)
     if not prev_text:
         return False
 
     adjusted_prev, adjusted_next = adjust_boundary(prev_text, translation)
+
+    changed = False
     if adjusted_next != translation:
         LOG_DEBUG(2, f"Particle correction: '{translation}' → '{adjusted_next}' (prev: '{prev_text}')")
         record["번역"] = adjusted_next
-        return True
-    return False
+        changed = True
+
+    # Also update previous record's trailing space if changed
+    if adjusted_prev != prev_text:
+        prev_record = _find_prev_record(record, all_records, field_name, idx)
+        if prev_record is not None and prev_record.get("번역") == prev_text:
+            prev_record["번역"] = adjusted_prev
+            LOG_DEBUG(2, f"Prev record space strip: '{prev_text}' → '{adjusted_prev}'")
+            changed = True
+
+    return changed
 
 
 def _UpdateXlsx(file_name: str):

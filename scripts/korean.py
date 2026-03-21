@@ -45,11 +45,9 @@ def last_korean_char(text: str):
     """
     if not text:
         return None
-    # Strip trailing whitespace and HTML tags
-    cleaned = re.sub(r'[\s<][^>]*>?\s*$', '', text.rstrip())
-    if not cleaned:
-        cleaned = text.rstrip()
-    # Walk backwards to find last Korean char
+    # Strip trailing HTML tags (e.g., </nobr>), then walk backwards
+    cleaned = re.sub(r'(<[^>]*>)+\s*$', '', text)
+    # Walk backwards to find last Korean char, skipping whitespace/punctuation
     for ch in reversed(cleaned):
         if _HANGUL_START <= ord(ch) <= _HANGUL_END:
             return ch
