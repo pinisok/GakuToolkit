@@ -54,7 +54,7 @@ sys.modules["scripts.rclone"] = _fake_scripts_rclone
 # --- Fake scripts.gspread module ---
 _fake_scripts_gspread = types.ModuleType("scripts.gspread")
 _fake_scripts_gspread.__package__ = "scripts"
-_fake_scripts_gspread.log = lambda logs: None
+_fake_scripts_gspread.log = lambda logs, new_file_urls=None: None
 sys.modules["scripts.gspread"] = _fake_scripts_gspread
 
 # --- Fake third-party gspread ---

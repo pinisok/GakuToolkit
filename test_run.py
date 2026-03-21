@@ -108,7 +108,7 @@ _fake_scripts_gspread = types.ModuleType("scripts.gspread")
 _fake_scripts_gspread.__package__ = "scripts"
 
 
-def _gspread_log(logs):
+def _gspread_log(logs, new_file_urls=None):
     _test_log(f"gspread.log() suppressed ({len(logs)} chars)")
 
 

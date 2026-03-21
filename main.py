@@ -60,23 +60,22 @@ def Update(ADV=True, MASTERDB=True, bFullUpdate=False):
 
     return ADV_FILE, MASTERDB_FILE, all_warnings
     
-def getDriveUrl(rel_path, remote_path=""):
-    """Get a clickable Google Sheets URL for a file.
-    rel_path: relative path from rclone.check (e.g. "cidol/file.xlsx")
-    remote_path: rclone remote base (e.g. "gakumas:Gakumas_KR/text assets")
-    """
+def getDriveLink(rel_path, remote_path=""):
+    """Get Google Drive open URL for a file.
+    Returns (display_text, drive_url_or_None)."""
     if not remote_path:
-        return rel_path
+        return rel_path, None
     full_remote = remote_path + "/" + rel_path
     try:
-        link = rclone.link(full_remote).replace(
+        link = rclone.link(full_remote)
+        sheets_link = link.replace(
             "https://drive.google.com/open?id=",
             "https://docs.google.com/spreadsheets/d/"
         )
-        return f"{rel_path} ({link})"
+        return f"{rel_path} ({sheets_link})", link
     except Exception as e:
         LOG_DEBUG(1, f"Failed to get drive link: {e}")
-        return rel_path
+        return rel_path, None
 
 def _convert_summary(NAME, ARR):
     if len(ARR[0]) + len(ARR[1]) > 0:
@@ -90,9 +89,12 @@ def _convert_summary(NAME, ARR):
             for fn in ARR[1]:
                 LOG_INFO(2, f"{fn} 번역 갱신")
 
-def _update_summary(NAME, upload_result, warnings=None):
+def _update_summary(NAME, upload_result, warnings=None, new_file_urls=None):
+    """Log update summary. Collects Drive URLs for new files into new_file_urls list."""
     if warnings is None:
         warnings = {}
+    if new_file_urls is None:
+        new_file_urls = []
     ARR = upload_result.get("files", [])
     remote_path = upload_result.get("remote_path", "")
     if len(ARR) > 0:
@@ -100,11 +102,13 @@ def _update_summary(NAME, upload_result, warnings=None):
         ARR.sort()
         for fn in ARR:
             rel_path = fn[1] if len(fn) > 1 else ""
-            url = getDriveUrl(rel_path, remote_path)
+            display, drive_url = getDriveLink(rel_path, remote_path)
             if fn[0] == "*":
-                LOG_INFO(2, f"업데이트 : {url}")
+                LOG_INFO(2, f"업데이트 : {display}")
             if fn[0] == "+":
-                LOG_INFO(2, f"추가 : {url}")
+                LOG_INFO(2, f"추가 : {display}")
+                if drive_url:
+                    new_file_urls.append(drive_url)
             # 해당 파일의 경고 출력 (파일당 최대 5건, 초과 시 요약)
             MAX_WARNINGS_PER_FILE = 5
             for wkey, wlist in warnings.items():
@@ -141,13 +145,14 @@ def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
     logStream = io.StringIO()
     logHandler = logging.StreamHandler(logStream)
     AddLogHandler(logHandler)
+    new_file_urls = []
     if UPDATE:
         if len(U_UPLOAD_ADV["files"]) + len(U_UPLOAD_MASTERDB["files"]) > 0:
             has_changes = True
             LOG_INFO(0, "---------------- 업데이트된 파일 요약 ----------------")
 
-            _update_summary("ADV", U_UPLOAD_ADV, update_warnings)
-            _update_summary("MASTERDB", U_UPLOAD_MASTERDB, update_warnings)
+            _update_summary("ADV", U_UPLOAD_ADV, update_warnings, new_file_urls)
+            _update_summary("MASTERDB", U_UPLOAD_MASTERDB, update_warnings, new_file_urls)
 
             LOG_INFO(0, "----------------------------------------------------------")
         else:
@@ -171,7 +176,7 @@ def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
     if has_changes:
         try:
             import scripts.gspread
-            scripts.gspread.log(log_content)
+            scripts.gspread.log(log_content, new_file_urls)
         except Exception as e:
             LOG_ERROR(0, f"Failed to log to Google Sheets: {e}")
     
