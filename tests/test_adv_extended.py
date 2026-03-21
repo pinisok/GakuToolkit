@@ -384,8 +384,8 @@ class TestFloatTranslatedText:
             {"id": "1", "name": "t", "translated name": "",
              "text": "hello", "translated text": 1.5}
         ]
-        _internalXlsxRecordsProcess(records)
-        assert records[0]["translated text"] == "1.5"
+        result = _internalXlsxRecordsProcess(records)
+        assert result[0]["translated text"] == "1.5"
 
     def test_non_str_non_numeric_becomes_empty(self):
         """None/other non-str/non-numeric should become empty string."""
@@ -393,8 +393,8 @@ class TestFloatTranslatedText:
             {"id": "info", "name": "f.txt", "translated name": "",
              "text": "", "translated text": None}
         ]
-        _internalXlsxRecordsProcess(records)
-        assert records[0]["translated text"] == ""
+        result = _internalXlsxRecordsProcess(records)
+        assert result[0]["translated text"] == ""
 
 
 class TestRoundTrip:

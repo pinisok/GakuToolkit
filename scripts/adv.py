@@ -60,38 +60,43 @@ def _processEMtag(string: str):
     result = string[start_idx+START_EM_LENGTH:start_idx+end_idx].replace(" ", "</em> <em>")
     return string[:start_idx] + "<em>" + result + "</em>" + _processEMtag(string[start_idx+end_idx+END_EM_LENGTH:])
 
-def _internalXlsxRecordsProcess(records : list[dict]):
-    for record in records:
+def _internalXlsxRecordsProcess(records : list[dict]) -> list[dict]:
+    """Process xlsx records: normalize types, translate names, encode text.
+    Returns a new list of processed records (does not mutate input)."""
+    processed = []
+    for idx, record in enumerate(records):
+        r = {**record}
         # id
-        if not isinstance(record["id"], str):
-            if isinstance(record["id"], int):   record["id"] = str(record["id"])
-            else:                               record["id"] = ""
+        if not isinstance(r["id"], str):
+            if isinstance(r["id"], int):   r["id"] = str(r["id"])
+            else:                          r["id"] = ""
         # name
-        if not isinstance(record["name"], str): record["name"] = ""
-        else:                                   record["name"] = str(record["name"])
-        if "translated name" in record.keys() and \
-                isinstance(record["translated name"], str) and \
-                len(record["translated name"].strip()) > 0:
-            record["name"] = record["translated name"]
+        if not isinstance(r["name"], str): r["name"] = ""
+        else:                              r["name"] = str(r["name"])
+        if "translated name" in r.keys() and \
+                isinstance(r["translated name"], str) and \
+                len(r["translated name"].strip()) > 0:
+            r["name"] = r["translated name"]
         else:
-            # 이름을 확인해 초성화가 있는 캐릭터라면 번역을 적용
-            record["name"] = CHARACTER_REGEX_TRANS_MAP.get(record["name"], record["name"])
+            r["name"] = CHARACTER_REGEX_TRANS_MAP.get(r["name"], r["name"])
 
         # text
-        if not isinstance(record["text"], str):                                         
-            record["text"] = ""
+        if not isinstance(r["text"], str):
+            r["text"] = ""
 
-        if not isinstance(record["translated text"], str):
-            if isinstance(record["translated text"], int) or isinstance(record["translated text"], float):  
-                record["translated text"] = str(record["translated text"])
-            else:                                                                       
-                record["translated text"] = ""
-                
-        record["text"] = _encode(record["text"])
-        record["translated text"] = _encode(record["translated text"])
-        record["translated text"] = _processEMtag(record["translated text"])
-        if len(record["translated text"]) < 1 and record["id"] != "译者" and record["id"] != "info":
-            raise Exception(f"Adv 파일 {records.index(record)}번째 줄 번역문 '{record['text']}'이 빈 줄 입니다. 해당 파일을 스킵합니다")
+        if not isinstance(r["translated text"], str):
+            if isinstance(r["translated text"], (int, float)):
+                r["translated text"] = str(r["translated text"])
+            else:
+                r["translated text"] = ""
+
+        r["text"] = _encode(r["text"])
+        r["translated text"] = _encode(r["translated text"])
+        r["translated text"] = _processEMtag(r["translated text"])
+        if len(r["translated text"]) < 1 and r["id"] != "译者" and r["id"] != "info":
+            raise Exception(f"Adv 파일 {idx}번째 줄 번역문 '{r['text']}'이 빈 줄 입니다. 해당 파일을 스킵합니다")
+        processed.append(r)
+    return processed
 
 def _internalCsvWriter(fp, records):
     writer = csv.DictWriter(fp, fieldnames=["id","name","text","trans"], lineterminator='\n')
@@ -293,7 +298,7 @@ def XlsxToCsv(read_fp, write_fp, origin_path:str):
     
     xlsx_records = xlsx_dataframe.to_dict(orient="records")
     
-    _internalXlsxRecordsProcess(xlsx_records)
+    xlsx_records = _internalXlsxRecordsProcess(xlsx_records)
     _internalCsvWriter(write_fp, xlsx_records)
 
 def CsvToTxt(read_fp, write_path, original_path): 

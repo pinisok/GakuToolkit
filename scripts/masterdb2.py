@@ -303,13 +303,13 @@ def OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
 def _OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
     data_list = json_data["data"]
     def _ExtractKeyTuple(record: dict):
-        key_size = (len(record.keys()) - 4) // 2
         keys = {}
-        record_list = list(record.values())
-        for idx in range(key_size):
-            key = record_list[1 + (idx*2)]
-            value = record_list[1 + (idx*2) + 1]
+        idx = 0
+        while f"KEY ID {idx}" in record:
+            key = record[f"KEY ID {idx}"]
+            value = record[f"KEY VALUE {idx}"]
             keys[key] = value
+            idx += 1
         return keys, record["ID"]
     def _TestKey(primaryKV, data:dict) -> bool:
         for k,v in primaryKV.items():

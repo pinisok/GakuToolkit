@@ -132,24 +132,33 @@ class TestXlsxRecordsProcess:
             {"id": 123, "name": "t", "translated name": "",
              "text": "hello", "translated text": "안녕"}
         ]
-        _internalXlsxRecordsProcess(records)
-        assert records[0]["id"] == "123"
+        result = _internalXlsxRecordsProcess(records)
+        assert result[0]["id"] == "123"
+
+    def test_does_not_mutate_input(self):
+        records = [
+            {"id": "1", "name": "麻央", "translated name": "",
+             "text": "hello", "translated text": "안녕"}
+        ]
+        result = _internalXlsxRecordsProcess(records)
+        assert records[0]["name"] == "麻央"  # Original unchanged
+        assert result[0]["name"] == "마오"   # New copy changed
 
     def test_character_name_translation(self):
         records = [
             {"id": "1", "name": "麻央", "translated name": "",
              "text": "hello", "translated text": "안녕"}
         ]
-        _internalXlsxRecordsProcess(records)
-        assert records[0]["name"] == "마오"
+        result = _internalXlsxRecordsProcess(records)
+        assert result[0]["name"] == "마오"
 
     def test_translated_name_priority(self):
         records = [
             {"id": "1", "name": "麻央", "translated name": "커스텀",
              "text": "hello", "translated text": "안녕"}
         ]
-        _internalXlsxRecordsProcess(records)
-        assert records[0]["name"] == "커스텀"
+        result = _internalXlsxRecordsProcess(records)
+        assert result[0]["name"] == "커스텀"
 
     def test_empty_translation_raises_for_normal_row(self):
         records = [
@@ -178,9 +187,9 @@ class TestXlsxRecordsProcess:
             {"id": "1", "name": "t", "translated name": "",
              "text": "hello\nworld", "translated text": "안녕\n세계"}
         ]
-        _internalXlsxRecordsProcess(records)
-        assert "\\n" in records[0]["text"]
-        assert "\\n" in records[0]["translated text"]
+        result = _internalXlsxRecordsProcess(records)
+        assert "\\n" in result[0]["text"]
+        assert "\\n" in result[0]["translated text"]
 
 
 # ============================================================
