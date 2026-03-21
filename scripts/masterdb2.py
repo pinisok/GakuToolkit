@@ -519,8 +519,7 @@ def _UpdateXlsx(file_name:str):
             record.pop("_GAKU_TOUCHED")
         if record["번역"] == "":
             record["번역"] = DB_get(record["원문"])
-            warnings.append(f"미번역 레코드 DB 폴백")
-            LOG_WARN(2, f"[{file_name}] Find old untranslated record, using DB cache")
+            LOG_DEBUG(2, f"[{file_name}] Untranslated record, using DB cache")
 
     WriteXlsx(file_name, kr_data_records)
     return empty_value_counter, warnings
