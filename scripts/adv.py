@@ -205,10 +205,23 @@ def _internalCsvToTxt(csv_strings, txt_strings):
     story_csv = _externalStoryCsv(csv_strings)
     parsed_message = _externalParser(txt_strings)
     iterator = iter(story_csv.data)
+    csv_row_idx = 0
+    def _next_csv_line():
+        nonlocal csv_row_idx
+        try:
+            row = next(iterator)
+            csv_row_idx += 1
+            return row
+        except StopIteration:
+            raise ValueError(
+                f"CSV has fewer rows than TXT messages. "
+                f"Ran out at row {csv_row_idx}. "
+                f"CSV has {len(story_csv.data)} rows."
+            )
     for line in parsed_message:
         if line["__tag__"] == "message" or line["__tag__"] == "narration":
             if line.get("text"):
-                next_csv_line = next(iterator)
+                next_csv_line = _next_csv_line()
                 new_text = _merger(
                     line["text"], next_csv_line["trans"], next_csv_line["text"]
                 )
@@ -227,7 +240,7 @@ def _internalCsvToTxt(csv_strings, txt_strings):
                 
         if line["__tag__"] == "title":
             if line.get("title"):
-                next_csv_line = next(iterator)
+                next_csv_line = _next_csv_line()
                 new_text = _merger(
                     line["title"], next_csv_line["trans"], next_csv_line["text"]
                 )
@@ -239,7 +252,7 @@ def _internalCsvToTxt(csv_strings, txt_strings):
         if line["__tag__"] == "choicegroup":
             if isinstance(line["choices"], list):
                 for choice in line["choices"]:
-                    next_csv_line = next(iterator)
+                    next_csv_line = _next_csv_line()
                     new_text = _merger(
                         choice["text"],
                         next_csv_line["trans"],
@@ -252,7 +265,7 @@ def _internalCsvToTxt(csv_strings, txt_strings):
                         1,
                     )
             elif isinstance(line["choices"], dict):
-                next_csv_line = next(iterator)
+                next_csv_line = _next_csv_line()
                 new_text = _merger(
                     line["choices"]["text"],
                     next_csv_line["trans"],
@@ -300,8 +313,7 @@ def XlsxToTxt_parallels(obj):
         XlsxToTxt(input_path, output_path, original_path)
         converted_file_list.append(filename)
     except Exception as e:
-        # LOG_ERROR(2, f"Error: {e}")
-        # logger.exception(e)
+        LOG_ERROR(2, f"Error converting {filename}: {e}")
         error_file_list.append((e, filename))
     return error_file_list, converted_file_list
 

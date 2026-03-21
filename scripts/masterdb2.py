@@ -13,17 +13,54 @@ from copy import deepcopy
 import shelve
 import re
 
+_db_handle = None
+_db_depth = 0
+
+
+class db_session:
+    """Context manager for batched shelve access.
+
+    Opens the DB once and reuses the handle for all DB_save/DB_get calls
+    within the block. Supports nesting — inner sessions reuse the outer handle.
+
+    Usage:
+        with db_session():
+            DB_save("key", "value")
+            val = DB_get("key")
+    """
+
+    def __enter__(self):
+        global _db_handle, _db_depth
+        if _db_handle is None:
+            _db_handle = shelve.open('DB.dat')
+        _db_depth += 1
+        return _db_handle
+
+    def __exit__(self, *exc):
+        global _db_handle, _db_depth
+        _db_depth -= 1
+        if _db_depth <= 0 and _db_handle is not None:
+            _db_handle.close()
+            _db_handle = None
+            _db_depth = 0
+
+
 def DB_save(key, value):
-    with shelve.open('DB.dat') as d:
-        d[key] = value
+    global _db_handle
+    if _db_handle is not None:
+        _db_handle[key] = value
+    else:
+        with shelve.open('DB.dat') as d:
+            d[key] = value
 
 
-def DB_get(key, default = ""):
-    with shelve.open('DB.dat') as d:
-        if key in d:
-            return d[key]
-        else:
-            return default
+def DB_get(key, default=""):
+    global _db_handle
+    if _db_handle is not None:
+        return _db_handle.get(key, default)
+    else:
+        with shelve.open('DB.dat') as d:
+            return d.get(key, default)
 
 
 
@@ -260,6 +297,10 @@ def JsonToRecord(file_name) -> list[dict]:
 
 PATTERN = re.compile(r"\[(\d+)\]")
 def OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
+    with db_session():
+        return _OverrideRecordToJson(json_data, records)
+
+def _OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
     data_list = json_data["data"]
     def _ExtractKeyTuple(record: dict):
         key_size = (len(record.keys()) - 4) // 2
@@ -402,6 +443,10 @@ Converter
 UPDATE_TIMESTAMP = datetime.today().isoformat(" ")
 # Update xlsx with gakumas-diff json
 def UpdateXlsx(file_name:str) -> int:
+    with db_session():
+        return _UpdateXlsx(file_name)
+
+def _UpdateXlsx(file_name:str) -> int:
     empty_value_counter = 0
     record_structure = GetRecordStructure(file_name)
     
