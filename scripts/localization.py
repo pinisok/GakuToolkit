@@ -29,7 +29,7 @@ def XlsxToJson(input_path, output_path):
         if not "ID" in input_record_keys or not type(input_record['ID']) == str:
             continue
         if not "번역" in input_record_keys or not type(input_record['번역']) == str:
-            LOG_WARN(3, f"{input_record['ID']}({input_record[0]})의 번역 값이 존재하지 않습니다. 넘어갑니다.")
+            LOG_DEBUG(3, f"{input_record['ID']}({input_record[0]})의 번역 값이 존재하지 않습니다. 넘어갑니다.")
             continue
         # 수정해야되는 내용 수정
         if input_record["번역"].startswith("'"):

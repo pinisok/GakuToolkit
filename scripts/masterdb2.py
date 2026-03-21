@@ -323,7 +323,7 @@ def _OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
             LOG_WARN(2, f"Find empty sub key(ID) for {record}")
             continue
         if record["번역"] == "":
-            LOG_WARN(2, f"Skip empty translated value for {record}")
+            LOG_DEBUG(2, f"Skip empty translated value for {record}")
             continue
         find = []
         for didx, data in enumerate(data_list):
@@ -348,7 +348,7 @@ def _OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
                         return traverse(subobj[idx], subkey_list[1])
                     elif isinstance(subobj[idx], str):
                         if subobj[idx] != record["원문"]:
-                            # LOG_WARN(2, f"Original text is not matched '{subobj[idx]}' != '{record['원문']}'")
+                            LOG_DEBUG(2, f"Original text mismatch at {subKey}: '{subobj[idx][:30]}' != '{record['원문'][:30]}'")
                             return False
                         DB_save(subobj[idx], record["번역"])
                         subobj[idx] = record["번역"]
@@ -361,7 +361,7 @@ def _OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
                             if trans_str.startswith("[LA_F]"):
                                 original_text = f"[LA_F]{'[LA_N_F]'.join(subobj[idx])}"
                                 if original_text != record["원문"]:
-                                    # LOG_WARN(2, f"Original text is not matched '{original_text}' != '{record['원문']}'")
+                                    LOG_DEBUG(2, f"Original text mismatch (array) at {subKey}")
                                     return False
                                 DB_save(subobj[idx], record["번역"])
                                 subobj[idx] = trans_str[len("[LA_F]"):].split("[LA_N_F]")
@@ -379,7 +379,7 @@ def _OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
                         return traverse(obj[subkey], subkey_list[1])
                     elif isinstance(obj[subkey], str):
                         if obj[subkey] != record["원문"]:
-                            # LOG_WARN(2, f"Original text is not matched '{obj[subkey]}' != '{record['원문']}'")
+                            LOG_DEBUG(2, f"Original text mismatch at {subKey}: '{obj[subkey][:30]}' != '{record['원문'][:30]}'")
                             return False
                         DB_save(obj[subkey], record["번역"])
                         obj[subkey] = record["번역"]
@@ -392,7 +392,7 @@ def _OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
                             if trans_str.startswith("[LA_F]"):
                                 original_text = f"[LA_F]{'[LA_N_F]'.join(obj[subkey])}"
                                 if original_text != record["원문"]:
-                                    # LOG_WARN(2, f"Original text is not matched '{original_text}' != '{record['원문']}'")
+                                    LOG_DEBUG(2, f"Original text mismatch (array) at {subKey}")
                                     return False
                                 DB_save(original_text, record["번역"])
                                 obj[subkey] = trans_str[len("[LA_F]"):].split("[LA_N_F]")

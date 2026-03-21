@@ -29,7 +29,7 @@ def XlsxToJson(input_path, output_path):
             if not "A" in input_record_keys or not type(input_record['A']) == str:
                 continue
             if not "B" in input_record_keys or not type(input_record['B']) == str or input_record['B'] == "":
-                LOG_WARN(3, f"{input_path}의 {input_record['A']}의 번역 값이 존재하지 않습니다. 넘어갑니다.")
+                LOG_DEBUG(3, f"{input_path}의 {input_record['A']}의 번역 값이 존재하지 않습니다. 넘어갑니다.")
                 continue
             if input_record["B"].startswith("'"):
                 data[input_record["A"].replace("\\r\\n","\r\n")] = input_record["B"][1:].replace("\\r\\n","\r\n")
@@ -39,7 +39,7 @@ def XlsxToJson(input_path, output_path):
             if not "text" in input_record_keys or not type(input_record['text']) == str:
                 continue
             if not "trans" in input_record_keys or not type(input_record['trans']) == str or input_record['trans'] == "":
-                LOG_WARN(3, f"{input_record}의 {input_record['text']}의 번역 값이 존재하지 않습니다. 넘어갑니다.")
+                LOG_DEBUG(3, f"{input_record}의 {input_record['text']}의 번역 값이 존재하지 않습니다. 넘어갑니다.")
                 continue
             if input_record["trans"].startswith("'"):
                 data[Deserialize(input_record["text"])] = Deserialize(input_record["trans"][1:])
