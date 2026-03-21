@@ -179,6 +179,13 @@ def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
             scripts.gspread.log(log_content, new_file_urls)
         except Exception as e:
             LOG_ERROR(0, f"Failed to log to Google Sheets: {e}")
+
+    # Exit with error if any conversion failures occurred
+    if CONVERT:
+        total_errors = len(C_ADV_FILE[0]) + len(C_MASTERDB_FILE[0]) + len(C_GENERIC_FILE[0]) + len(C_LOCALIZATION_FILE[0])
+        if total_errors > 0:
+            LOG_ERROR(0, f"Convert phase had {total_errors} error(s)")
+            raise SystemExit(1)
     
 
 

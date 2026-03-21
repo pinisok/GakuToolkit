@@ -1053,6 +1053,73 @@ class TestTxtToXlsxValues:
 
 
 # ============================================================
+# Offset-based replacement safety tests
+# ============================================================
+
+
+class TestCsvToTxtOffsetSafety:
+    """Verify offset-based replacement prevents cross-contamination."""
+
+    def test_translation_containing_next_original(self, tmp_path):
+        """When translation text contains the next line's original text,
+        offset-based replacement should not corrupt subsequent lines."""
+        txt_path = str(tmp_path / "original.txt")
+        # Line 1: "AB", Line 2: "B" — if translation of "AB" is "XBY",
+        # naive replace would match "B" inside "XBY" for line 2
+        create_adv_txt(txt_path, [
+            {"tag": "message", "text": "こんにちは世界", "name": "A"},
+            {"tag": "message", "text": "世界", "name": "B"},
+        ])
+
+        xlsx_path = str(tmp_path / "test.xlsx")
+        create_adv_xlsx(xlsx_path, [
+            {"id": "0000000000000", "name": "A", "translated name": "",
+             "text": "こんにちは世界", "translated text": "안녕 세계야 세계"},
+            {"id": "0000000000000", "name": "B", "translated name": "",
+             "text": "世界", "translated text": "세계"},
+        ])
+
+        output_path = str(tmp_path / "output.txt")
+        XlsxToTxt(xlsx_path, output_path, txt_path)
+
+        with open(output_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # First message: full translation applied
+        assert "text=안녕 세계야 세계" in content
+        # Second message: separate replacement, not corrupted
+        assert "text=세계" in content
+        # Verify both exist (the second "text=세계" should be its own tag)
+        lines_with_text = [l for l in content.split("\n") if "text=" in l and "message" in l]
+        assert len(lines_with_text) == 2
+
+    def test_repeated_identical_text(self, tmp_path):
+        """Multiple messages with the same original text should each be replaced."""
+        txt_path = str(tmp_path / "original.txt")
+        create_adv_txt(txt_path, [
+            {"tag": "message", "text": "同じテキスト", "name": "A"},
+            {"tag": "message", "text": "同じテキスト", "name": "B"},
+        ])
+
+        xlsx_path = str(tmp_path / "test.xlsx")
+        create_adv_xlsx(xlsx_path, [
+            {"id": "0000000000000", "name": "A", "translated name": "",
+             "text": "同じテキスト", "translated text": "같은 텍스트1"},
+            {"id": "0000000000000", "name": "B", "translated name": "",
+             "text": "同じテキスト", "translated text": "같은 텍스트2"},
+        ])
+
+        output_path = str(tmp_path / "output.txt")
+        XlsxToTxt(xlsx_path, output_path, txt_path)
+
+        with open(output_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        assert "같은 텍스트1" in content
+        assert "같은 텍스트2" in content
+
+
+# ============================================================
 # P3: DataToRecord edge cases (P3-15/16)
 # ============================================================
 

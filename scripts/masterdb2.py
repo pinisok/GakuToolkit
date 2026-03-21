@@ -296,27 +296,123 @@ def JsonToRecord(file_name) -> list[dict]:
 
 
 PATTERN = re.compile(r"\[(\d+)\]")
-def OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
+
+
+def _apply_str_translation(container, key, record, sub_key_path):
+    """Apply string translation to container[key].
+
+    Returns True if applied, False if original text mismatch.
+    """
+    if container[key] != record["원문"]:
+        LOG_DEBUG(2, f"Original text mismatch at {sub_key_path}: '{container[key][:30]}' != '{record['원문'][:30]}'")
+        return False
+    DB_save(container[key], record["번역"])
+    container[key] = record["번역"]
+    return True
+
+
+def _apply_list_translation(container, key, record, sub_key_path, debug_context=""):
+    """Apply list (string array) translation to container[key].
+
+    Returns True if applied, False on mismatch, None if invalid format.
+    """
+    trans_str = record["번역"]
+    if not trans_str.startswith("[LA_F]"):
+        LOG_WARN(2, f"Except list but meet invalid translate value \"{trans_str}\" at \"{record}\"{debug_context}")
+        return None
+    original_text = f"[LA_F]{'[LA_N_F]'.join(container[key])}"
+    if original_text != record["원문"]:
+        LOG_DEBUG(2, f"Original text mismatch (array) at {sub_key_path}")
+        return False
+    DB_save(original_text, record["번역"])
+    container[key] = trans_str[len("[LA_F]"):].split("[LA_N_F]")
+    return True
+
+
+def _traverse_and_apply(obj, key_path, record, sub_key_path, debug_context=""):
+    """Recursively traverse obj along key_path and apply translation.
+
+    Args:
+        obj: Current object being traversed (dict or list).
+        key_path: Remaining dot-separated key path (e.g. "field[0].subfield").
+        record: The translation record with "원문" and "번역".
+        sub_key_path: Full sub-key path for logging.
+        debug_context: Debug info string for warnings.
+
+    Returns True if translation applied, False otherwise.
+    """
+    subkey_list = key_path.split(".", 1)
+    subkey = subkey_list[0]
+    remaining = subkey_list[1] if len(subkey_list) > 1 else None
+    match_result = PATTERN.search(subkey)
+
+    # Resolve the target value: either via array index or direct key
+    if isinstance(match_result, re.Match):
+        idx = int(match_result.groups()[0])
+        subkey_name = PATTERN.sub("", subkey)
+        parent = obj[subkey_name]
+        value = parent[idx]
+    else:
+        parent = obj
+        idx = subkey
+        value = obj[subkey]
+
+    # Recurse into dict
+    if isinstance(value, dict):
+        if remaining is None:
+            LOG_WARN(2, f"Subkey {sub_key_path} is short for object {record}{debug_context}")
+            return False
+        return _traverse_and_apply(value, remaining, record, sub_key_path, debug_context)
+
+    # Apply string translation
+    if isinstance(value, str):
+        return _apply_str_translation(parent, idx, record, sub_key_path)
+
+    # Handle list value
+    if isinstance(value, list):
+        # Non-string list → recurse deeper
+        if len(value) > 0 and not isinstance(value[0], str):
+            if remaining is not None:
+                return _traverse_and_apply(
+                    parent if not isinstance(match_result, re.Match) else parent,
+                    remaining, record, sub_key_path, debug_context,
+                )
+            return False
+        # String array → apply list translation
+        result = _apply_list_translation(parent, idx, record, sub_key_path, debug_context)
+        return result is True
+
+    LOG_WARN(2, f"Failed to match sub key {sub_key_path} for {record}{debug_context}")
+    return False
+
+
+def _ExtractKeyTuple(record: dict):
+    """Extract primary key dict and sub-key ID from a record."""
+    keys = {}
+    idx = 0
+    while f"KEY ID {idx}" in record:
+        keys[record[f"KEY ID {idx}"]] = record[f"KEY VALUE {idx}"]
+        idx += 1
+    return keys, record["ID"]
+
+
+def _TestKey(primaryKV, data: dict) -> bool:
+    """Check if data matches all primary key-value pairs."""
+    for k, v in primaryKV.items():
+        if k in data and str(data.get(k, None)) != v:
+            return False
+    return True
+
+
+def OverrideRecordToJson(json_data: dict, records: list[dict]) -> dict:
     with db_session():
         return _OverrideRecordToJson(json_data, records)
 
-def _OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
+
+def _OverrideRecordToJson(json_data: dict, records: list[dict]) -> dict:
     data_list = json_data["data"]
-    def _ExtractKeyTuple(record: dict):
-        keys = {}
-        idx = 0
-        while f"KEY ID {idx}" in record:
-            key = record[f"KEY ID {idx}"]
-            value = record[f"KEY VALUE {idx}"]
-            keys[key] = value
-            idx += 1
-        return keys, record["ID"]
-    def _TestKey(primaryKV, data:dict) -> bool:
-        for k,v in primaryKV.items():
-            if k in data and str(data.get(k, None)) != v:
-                return False
-        return True
     translated_result = []
+
     for ridx, record in enumerate(records):
         primaryKey, subKey = _ExtractKeyTuple(record)
         if subKey == "":
@@ -325,94 +421,24 @@ def _OverrideRecordToJson(json_data:dict, records: list[dict]) -> dict:
         if record["번역"] == "":
             LOG_DEBUG(2, f"Skip empty translated value for {record}")
             continue
-        find = []
-        for didx, data in enumerate(data_list):
-            if not _TestKey(primaryKey, data):
-                continue
-            find.append(didx)
+
+        find = [didx for didx, data in enumerate(data_list) if _TestKey(primaryKey, data)]
         if len(find) < 1:
             LOG_WARN(2, f"Failed to find matching primary key for {record}")
             continue
-        # Apply transalte
-        def traverse(obj, key):
-            subkey_list = key.split(".",1)
-            subkey = subkey_list[0]
-            match_result = PATTERN.search(subkey)
-            try:
-                # For array XXXX[5]
-                if isinstance(match_result, re.Match):
-                    idx = int(match_result.groups()[0])
-                    subkey_name = PATTERN.sub("", subkey)
-                    subobj = obj[subkey_name]
-                    if isinstance(subobj[idx], dict):
-                        return traverse(subobj[idx], subkey_list[1])
-                    elif isinstance(subobj[idx], str):
-                        if subobj[idx] != record["원문"]:
-                            LOG_DEBUG(2, f"Original text mismatch at {subKey}: '{subobj[idx][:30]}' != '{record['원문'][:30]}'")
-                            return False
-                        DB_save(subobj[idx], record["번역"])
-                        subobj[idx] = record["번역"]
-                        return True
-                    elif isinstance(subobj[idx], list):
-                        if (len(subobj) > 0) and (not isinstance(subobj[0], str)):
-                            return traverse(subobj, subkey_list[1])
-                        else:
-                            trans_str:str = record["번역"]
-                            if trans_str.startswith("[LA_F]"):
-                                original_text = f"[LA_F]{'[LA_N_F]'.join(subobj[idx])}"
-                                if original_text != record["원문"]:
-                                    LOG_DEBUG(2, f"Original text mismatch (array) at {subKey}")
-                                    return False
-                                DB_save(subobj[idx], record["번역"])
-                                subobj[idx] = trans_str[len("[LA_F]"):].split("[LA_N_F]")
-                                return True
-                            else:
-                                LOG_WARN(2, f"Except list type but get invalid translate value \"{trans_str}\" at \"{record}\" / data:[{didx}/{data_list[didx]}]")
-                    else:
-                        LOG_WARN(2, f"Failed to match sub key {subKey} for {record} / data:[{didx}/{data_list[didx]}]")
-                        return False
-                # XXXX
-                else:
-                    if isinstance(obj[subkey], dict):
-                        if len(subkey_list) < 2:
-                            LOG_WARN(2, f"Subkey {subKey} is short for object {record} / data:[{didx}/{data_list[didx]}]")
-                        return traverse(obj[subkey], subkey_list[1])
-                    elif isinstance(obj[subkey], str):
-                        if obj[subkey] != record["원문"]:
-                            LOG_DEBUG(2, f"Original text mismatch at {subKey}: '{obj[subkey][:30]}' != '{record['원문'][:30]}'")
-                            return False
-                        DB_save(obj[subkey], record["번역"])
-                        obj[subkey] = record["번역"]
-                        return True
-                    elif isinstance(obj[subkey], list):
-                        if (len(obj[subkey]) > 0) and (not isinstance(obj[subkey][0], str)):
-                            return traverse(obj, subkey_list[1])
-                        else:
-                            trans_str:str = record["번역"]
-                            if trans_str.startswith("[LA_F]"):
-                                original_text = f"[LA_F]{'[LA_N_F]'.join(obj[subkey])}"
-                                if original_text != record["원문"]:
-                                    LOG_DEBUG(2, f"Original text mismatch (array) at {subKey}")
-                                    return False
-                                DB_save(original_text, record["번역"])
-                                obj[subkey] = trans_str[len("[LA_F]"):].split("[LA_N_F]")
-                                return True
-                            else:
-                                LOG_WARN(2, f"Except list but meet invalid translate value \"{trans_str}\" at \"{record}\" / data:[{didx}/{data_list[didx]}]")
-            except Exception as e:
-                LOG_WARN(2, f"Failed to match sub key {subKey} for {record} / data:[{didx}/{data_list[didx]}] / {e}")
-                return False
-            return False
+
         translated_list = []
-        for idx in find:
-            if traverse(data_list[idx], subKey):
-                translated_list.append(idx)
+        for didx in find:
+            debug_ctx = f" / data:[{didx}/{data_list[didx]}]"
+            try:
+                if _traverse_and_apply(data_list[didx], subKey, record, subKey, debug_ctx):
+                    translated_list.append(didx)
+            except Exception as e:
+                LOG_WARN(2, f"Failed to match sub key {subKey} for {record}{debug_ctx} / {e}")
+
         if len(translated_list) > 1:
             LOG_DEBUG(2, f"Replace multiple text \"{record}\" for \"{[(idx, data_list[idx]) for idx in translated_list]}\"")
         translated_result += translated_list
-    # for idx in [idx for idx in range(len(data_list)) if idx not in translated_result]:
-    #     LOG_WARN(2, f"Detect not translated line [{idx}]\"{data_list[idx]}\"")
-
 
     return json_data
 
@@ -447,81 +473,120 @@ def UpdateXlsx(file_name:str):
     with db_session():
         return _UpdateXlsx(file_name)
 
-def _UpdateXlsx(file_name:str):
+def _extract_primary_key_tuple(record: dict):
+    """Extract primary key fields as a hashable tuple for indexing."""
+    keys = list(record.keys())
+    # Primary key fields are between IMAGE and ID (indices 1..N where N = (len-4)//2 * 2)
+    key_count = (len(keys) - 4) // 2
+    pk_values = []
+    for i in range(key_count):
+        pk_values.append((record[keys[2 * i + 1]], record[keys[2 * i + 2]]))
+    return tuple(pk_values)
+
+
+def _build_kr_index(kr_data_records):
+    """Build a primary key → list of (index, record) index for fast lookup."""
+    index = {}
+    for idx, record in enumerate(kr_data_records):
+        pk = _extract_primary_key_tuple(record)
+        index.setdefault(pk, []).append((idx, record))
+    return index
+
+
+def _match_kr_record(jp_record, jp_keys, candidates):
+    """Find the best matching kr_record from candidates.
+
+    Returns (kr_target_idx, kr_target_record) where kr_target_record is None
+    if no exact match was found (kr_target_idx may still point to a near-match).
+    """
+    kr_target_idx = -1
+    kr_target_record = None
+    for kr_idx, kr_record in candidates:
+        if jp_record['ID'] != kr_record['ID']:
+            kr_target_idx = kr_idx
+            continue
+        if jp_record['원문'] != kr_record['원문']:
+            kr_target_idx = kr_idx
+            continue
+        kr_record["_GAKU_TOUCHED"] = True
+        if kr_target_record is not None:
+            continue
+        kr_target_idx = kr_idx
+        kr_target_record = kr_record
+    return kr_target_idx, kr_target_record
+
+
+def _UpdateXlsx(file_name: str):
     empty_value_counter = 0
     warnings = []
     record_structure = GetRecordStructure(file_name)
-    
+
     kr_data_records = ReadXlsx(file_name)
     kr_data_records_size = len(kr_data_records)
-        
+
     if kr_data_records_size > 0 and len(record_structure.keys()) != len(kr_data_records[0].keys()):
         LOG_ERROR(2, f"Mismatch PrimaryKey with {file_name}.xlsx and scripts")
         LOG_ERROR(3, f"Please convert key to '{kr_data_records}'")
         raise KeyError("Mismatch PrimaryKey")
-    
+
     jp_data_records = JsonToRecord(file_name)
 
     old_kr_data_kv = {}
     try:
         old_kr_data_kv = LoadOldKV(file_name)
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         old_kr_data_kv = {}
-    
-    kr_touched_list = []
+
+    # Build index for O(1) primary key lookup
+    kr_index = _build_kr_index(kr_data_records)
+
+    # Collect new records to insert (avoid modifying kr_data_records during iteration)
+    # Each entry: (insert_after_idx, new_record) or (None, new_record) for append
+    pending_inserts = []
+
     for jp_idx, jp_record in enumerate(jp_data_records):
         jp_keys = list(jp_record.keys())
-        kr_target_idx = -1
-        kr_target_record = None
-        for kr_idx, kr_record in enumerate(kr_data_records):
-            kr_keys = list(kr_record.keys())
-            isPrimaryKeyUnMatch = False
-            for tidx in range(1,len(jp_keys)-4):
-                if jp_record[jp_keys[tidx]] != kr_record[kr_keys[tidx]]:
-                    isPrimaryKeyUnMatch = True
-            if isPrimaryKeyUnMatch:
-                continue
-            if jp_record['ID'] != kr_record['ID']:
-                kr_target_idx = kr_idx
-                continue
-            if jp_record['원문'] != kr_record['원문']:
-                # LOG_WARN(2, f"Original text mismatch for jp(newer):'{jp_record}' kr(older):'{kr_record}'")
-                kr_target_idx = kr_idx
-                continue
-            kr_record["_GAKU_TOUCHED"] = True
-            if kr_target_record != None:
-                # LOG_WARN(2, f"Find duplicate key match for jp:'{jp_record}' kr1:'{kr_target_record}' kr2:'{kr_record}'")
-                continue
-            kr_target_idx = kr_idx
-            kr_target_record = kr_record
-        if kr_target_record == None:
+        jp_pk = _extract_primary_key_tuple(jp_record)
+        candidates = kr_index.get(jp_pk, [])
+
+        kr_target_idx, kr_target_record = _match_kr_record(jp_record, jp_keys, candidates)
+
+        if kr_target_record is None:
             jp_record["설명"] = "추가 : " + UPDATE_TIMESTAMP
             jp_record["번역"] = DB_get(jp_record["원문"])
             if jp_record["번역"] == "":
-                jp_record["번역"] = old_kr_data_kv.get(jp_record["원문"], "") 
+                jp_record["번역"] = old_kr_data_kv.get(jp_record["원문"], "")
             empty_value_counter += 1
+            jp_record["_GAKU_TOUCHED"] = True
             if kr_target_idx == -1:
-                jp_record["_GAKU_TOUCHED"] = True
-                kr_data_records.append(jp_record)
+                pending_inserts.append((None, jp_record))
             else:
-                jp_record["_GAKU_TOUCHED"] = True
-                kr_data_records.insert(kr_target_idx+1, jp_record)
-                warnings.append(f"신규 레코드 추가 at {kr_target_idx+1}")
-                LOG_WARN(2, f"[{file_name}] Find new record inside on {kr_target_idx+1}")
-    # Collect unused data
-    kr_unused_list = [(idx,record) for idx, record in enumerate(kr_data_records) if "_GAKU_TOUCHED" not in record]
-    for kr_idx, record in kr_unused_list:
-        warnings.append(f"미사용 레코드 삭제 [{kr_idx}]")
-        LOG_WARN(2, f"[{file_name}] Unused record[{kr_idx}]")
-        kr_data_records.remove(record)
-    for record in kr_data_records:
-        if "_GAKU_TOUCHED" in record:
-            record.pop("_GAKU_TOUCHED")
+                pending_inserts.append((kr_target_idx, jp_record))
+                warnings.append(f"신규 레코드 추가 near {kr_target_idx}")
+                LOG_WARN(2, f"[{file_name}] Find new record near {kr_target_idx}")
+
+    # Apply inserts: process from highest index to lowest to preserve positions
+    appends = [rec for idx, rec in pending_inserts if idx is None]
+    positional = [(idx, rec) for idx, rec in pending_inserts if idx is not None]
+    positional.sort(key=lambda x: x[0], reverse=True)
+    for insert_idx, record in positional:
+        kr_data_records.insert(insert_idx + 1, record)
+    kr_data_records.extend(appends)
+
+    # Filter out unused records (immutable approach)
+    result_records = []
+    for idx, record in enumerate(kr_data_records):
+        if "_GAKU_TOUCHED" not in record:
+            warnings.append(f"미사용 레코드 삭제 [{idx}]")
+            LOG_WARN(2, f"[{file_name}] Unused record[{idx}]")
+            continue
+        record.pop("_GAKU_TOUCHED")
         if record["번역"] == "":
             record["번역"] = DB_get(record["원문"])
             LOG_DEBUG(2, f"[{file_name}] Untranslated record, using DB cache")
+        result_records.append(record)
 
-    WriteXlsx(file_name, kr_data_records)
+    WriteXlsx(file_name, result_records)
     return empty_value_counter, warnings
 
 def CreateJSON(file_name):

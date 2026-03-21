@@ -334,6 +334,7 @@ from scripts.masterdb2 import (
     DataToRecord,
     JsonToRecord,
     CreateJSON,
+    UpdateXlsx,
     WriteXlsx,
     ReadXlsx,
     ReadJson,
@@ -812,6 +813,114 @@ class TestUpdateXlsx:
             mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
 
         assert any(r["번역"] == "보존될번역" for r in records)
+
+    def test_unused_records_removed(self, tmp_path, shelve_test_cleanup):
+        """KR records not matching any JP record should be removed."""
+        import scripts.masterdb2 as mdb2
+
+        xlsx_path = str(tmp_path / "drive2" / "Achievement.xlsx")
+        os.makedirs(os.path.dirname(xlsx_path), exist_ok=True)
+        create_masterdb_xlsx(xlsx_path, None, [
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "keep-001",
+             "ID": "name", "원문": "残る", "번역": "남음", "설명": ""},
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "gone-001",
+             "ID": "name", "원문": "消える", "번역": "삭제됨", "설명": ""},
+        ])
+
+        json_path = str(tmp_path / "json" / "Achievement.json")
+        os.makedirs(os.path.dirname(json_path), exist_ok=True)
+        create_masterdb_json(json_path, ["id"], [
+            {"id": "keep-001", "name": "残る"},
+        ])
+
+        old_xlsx = str(tmp_path / "drive1" / "Achievement.xlsx")
+        os.makedirs(os.path.dirname(old_xlsx), exist_ok=True)
+        create_masterdb_xlsx(old_xlsx, None, [
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "x",
+             "ID": "name", "원문": "x", "번역": "x", "설명": ""},
+        ])
+
+        saved = {
+            "json": mdb2.MASTERDB_JSON_PATH,
+            "drive2": mdb2.MASTERDB2_DRIVE_PATH,
+            "drive1": mdb2.MASTERDB_DRIVE_PATH,
+        }
+        mdb2.MASTERDB_JSON_PATH = str(tmp_path / "json")
+        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
+        mdb2.MASTERDB_DRIVE_PATH = str(tmp_path / "drive1")
+        try:
+            _, warnings = UpdateXlsx("Achievement")
+        finally:
+            mdb2.MASTERDB_JSON_PATH = saved["json"]
+            mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
+            mdb2.MASTERDB_DRIVE_PATH = saved["drive1"]
+
+        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
+        try:
+            records = ReadXlsx("Achievement")
+        finally:
+            mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
+
+        originals = {r["원문"] for r in records}
+        assert "残る" in originals
+        assert "消える" not in originals
+        assert any("미사용" in w for w in warnings)
+
+    def test_multiple_inserts_stable_order(self, tmp_path, shelve_test_cleanup):
+        """Multiple new records should be inserted in correct order."""
+        import scripts.masterdb2 as mdb2
+
+        xlsx_path = str(tmp_path / "drive2" / "Achievement.xlsx")
+        os.makedirs(os.path.dirname(xlsx_path), exist_ok=True)
+        create_masterdb_xlsx(xlsx_path, None, [
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "base-001",
+             "ID": "name", "원문": "ベース", "번역": "베이스", "설명": ""},
+        ])
+
+        json_path = str(tmp_path / "json" / "Achievement.json")
+        os.makedirs(os.path.dirname(json_path), exist_ok=True)
+        create_masterdb_json(json_path, ["id"], [
+            {"id": "base-001", "name": "ベース"},
+            {"id": "new-001", "name": "新規A"},
+            {"id": "new-002", "name": "新規B"},
+        ])
+
+        old_xlsx = str(tmp_path / "drive1" / "Achievement.xlsx")
+        os.makedirs(os.path.dirname(old_xlsx), exist_ok=True)
+        create_masterdb_xlsx(old_xlsx, None, [
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "x",
+             "ID": "name", "원문": "x", "번역": "x", "설명": ""},
+        ])
+
+        saved = {
+            "json": mdb2.MASTERDB_JSON_PATH,
+            "drive2": mdb2.MASTERDB2_DRIVE_PATH,
+            "drive1": mdb2.MASTERDB_DRIVE_PATH,
+        }
+        mdb2.MASTERDB_JSON_PATH = str(tmp_path / "json")
+        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
+        mdb2.MASTERDB_DRIVE_PATH = str(tmp_path / "drive1")
+        try:
+            empty_count, _ = UpdateXlsx("Achievement")
+        finally:
+            mdb2.MASTERDB_JSON_PATH = saved["json"]
+            mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
+            mdb2.MASTERDB_DRIVE_PATH = saved["drive1"]
+
+        assert empty_count >= 2
+
+        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
+        try:
+            records = ReadXlsx("Achievement")
+        finally:
+            mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
+
+        originals = [r["원문"] for r in records]
+        assert "ベース" in originals
+        assert "新規A" in originals
+        assert "新規B" in originals
+        # All 3 records should exist
+        assert len(records) == 3
 
 
 class TestWriteXlsx:

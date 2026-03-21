@@ -195,6 +195,21 @@ def _internalDataFrameToXlsx(dataframe, write_fp):
 
     writer.close()
 
+def _replace_at_offset(text, old, new, offset):
+    """Replace first occurrence of `old` in `text` at or after `offset`.
+
+    Returns (new_text, new_offset_after_replacement).
+    Raises ValueError if `old` is not found after `offset`.
+    """
+    idx = text.find(old, offset)
+    if idx == -1:
+        raise ValueError(
+            f"Could not find '{old[:50]}' in text after offset {offset}"
+        )
+    result = text[:idx] + new + text[idx + len(old):]
+    return result, idx + len(new)
+
+
 def _internalCsvToTxt(csv_strings, txt_strings):
     def _merger(original_text: str,
         translated_text: str,
@@ -215,6 +230,7 @@ def _internalCsvToTxt(csv_strings, txt_strings):
     parsed_message = _externalParser(txt_strings)
     iterator = iter(story_csv.data)
     csv_row_idx = 0
+    search_offset = 0
     def _next_csv_line():
         nonlocal csv_row_idx
         try:
@@ -234,30 +250,39 @@ def _internalCsvToTxt(csv_strings, txt_strings):
                 new_text = _merger(
                     line["text"], next_csv_line["trans"], next_csv_line["text"]
                 )
-                txt_strings = txt_strings.replace(
+                txt_strings, search_offset = _replace_at_offset(
+                    txt_strings,
                     f"text={line['text']}",
                     f"text={new_text}",
-                    1,
+                    search_offset,
                 )
                 # Name replacement (only for message with text, not narration)
+                # name= appears after text= on the same tag line
                 if line["__tag__"] == "message":
                     if line.get("name") and line["name"] != "" and next_csv_line["name"] != "":
-                        txt_strings = txt_strings.replace(
-                            f"name={line['name']}",
-                            f"name={next_csv_line['name']}",
-                            1,
-                        )
-                
+                        # Find the end of current tag line to limit search scope
+                        line_end = txt_strings.find("]", search_offset)
+                        if line_end == -1:
+                            line_end = len(txt_strings)
+                        name_old = f"name={line['name']}"
+                        name_new = f"name={next_csv_line['name']}"
+                        name_idx = txt_strings.find(name_old, search_offset, line_end + 1)
+                        if name_idx != -1:
+                            len_diff = len(name_new) - len(name_old)
+                            txt_strings = txt_strings[:name_idx] + name_new + txt_strings[name_idx + len(name_old):]
+                            search_offset += len_diff
+
         if line["__tag__"] == "title":
             if line.get("title"):
                 next_csv_line = _next_csv_line()
                 new_text = _merger(
                     line["title"], next_csv_line["trans"], next_csv_line["text"]
                 )
-                txt_strings = txt_strings.replace(
+                txt_strings, search_offset = _replace_at_offset(
+                    txt_strings,
                     f"title={line['title']}",
                     f"title={new_text}",
-                    1,
+                    search_offset,
                 )
         if line["__tag__"] == "choicegroup":
             if isinstance(line["choices"], list):
@@ -269,10 +294,11 @@ def _internalCsvToTxt(csv_strings, txt_strings):
                         next_csv_line["text"],
                         is_choice=True,
                     )
-                    txt_strings = txt_strings.replace(
+                    txt_strings, search_offset = _replace_at_offset(
+                        txt_strings,
                         f"text={choice['text']}",
                         f"text={new_text}",
-                        1,
+                        search_offset,
                     )
             elif isinstance(line["choices"], dict):
                 next_csv_line = _next_csv_line()
@@ -282,10 +308,11 @@ def _internalCsvToTxt(csv_strings, txt_strings):
                     next_csv_line["text"],
                     is_choice=True,
                 )
-                txt_strings = txt_strings.replace(
+                txt_strings, search_offset = _replace_at_offset(
+                    txt_strings,
                     f'text={line["choices"]["text"]}',
                     f"text={new_text}",
-                    1,
+                    search_offset,
                 )
     return txt_strings
 
