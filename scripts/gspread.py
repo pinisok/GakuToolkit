@@ -13,16 +13,19 @@ def log(logs, new_file_urls=None):
     worksheet = SHEET.worksheet("업데이트 로그")
     worksheet.insert_cols([[]],1)
 
-    # Build cell data: A2=title, A3=logs, A4+=file chip URLs
+    # Build cell data: A2=title, A3=logs, A4+=file chip URLs with date in B column
+    now = datetime.datetime.now()
+    date_str = now.strftime("(%Y-%m-%d)")
     cells = [
-        [str(datetime.datetime.now()) + " 업데이트 기록"],
+        [str(now) + " 업데이트 기록"],
         [logs],
     ]
     for url in new_file_urls:
-        cells.append([url])
+        cells.append([url, date_str])
 
     last_row = 2 + len(cells) - 1
-    worksheet.update(cells, f'A2:A{last_row}')
+    col_end = "B" if new_file_urls else "A"
+    worksheet.update(cells, f'A2:{col_end}{last_row}')
 
     # Format title (A2)
     worksheet.format("A2", {
