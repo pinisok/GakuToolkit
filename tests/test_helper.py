@@ -257,3 +257,35 @@ class TestSaveCacheDate:
         with open(cache_file, "r") as f:
             content = f.read()
         assert content != "old content"
+
+
+# ============================================================
+# Conversion correctness tests (merged from test_conversion_correctness.py)
+# ============================================================
+
+class TestLoadCacheDateEdge:
+    """Cache file edge cases."""
+
+    def test_blank_first_line(self, tmp_path):
+        """Blank first line should return None, not IndexError."""
+        cache_file = str(tmp_path / "cache.txt")
+        with open(cache_file, "w") as f:
+            f.write("\n2026-03-22 10:00:00")
+        result = load_cache_date(cache_file)
+        assert result is None
+
+    def test_multi_line_uses_first_only(self, tmp_path):
+        """Only the first line should be parsed."""
+        cache_file = str(tmp_path / "cache.txt")
+        with open(cache_file, "w") as f:
+            f.write("2026-03-22 10:00:00\n2026-01-01 00:00:00")
+        result = load_cache_date(cache_file)
+        assert result.year == 2026
+        assert result.month == 3  # First line, not second
+
+
+# ============================================================
+# P3: _filter_adv_files tuple structure (P3-24)
+# ============================================================
+
+

@@ -4,6 +4,7 @@ import os
 import json
 
 import pytest
+import pandas as pd
 
 from tests.fixtures.create_fixtures import create_masterdb_xlsx, create_masterdb_json
 from scripts.masterdb2 import (
@@ -1105,3 +1106,192 @@ class TestDBSession:
                 DB_save("inner_key", "inner")
                 assert DB_get("outer_key") == "outer"
             assert DB_get("inner_key") == "inner"
+
+
+# ============================================================
+# Conversion correctness tests (merged from test_conversion_correctness.py)
+# ============================================================
+
+class TestOverrideRecordToJsonCompleteness:
+    """Verify actual output values, not just structure."""
+
+    def test_traverse_exception_leaves_other_data_intact(self, shelve_test_cleanup):
+        """A bad record path should not corrupt other records."""
+        json_data = {
+            "rules": {"primaryKeys": ["id"]},
+            "data": [
+                {"id": "good", "name": "良い名前"},
+                {"id": "bad", "name": "悪い名前"},
+            ],
+        }
+        records = [
+            # Good record
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "good",
+             "ID": "name", "원문": "良い名前", "번역": "좋은이름", "설명": ""},
+            # Bad record: path points to nonexistent field
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "bad",
+             "ID": "nonexistent.deep.path", "원문": "x", "번역": "y", "설명": ""},
+        ]
+
+        result = OverrideRecordToJson(json_data, records)
+
+        # Good record should be translated
+        assert result["data"][0]["name"] == "좋은이름"
+        # Bad record should be unchanged (exception caught internally)
+        assert result["data"][1]["name"] == "悪い名前"
+
+
+# ============================================================
+# MasterDB: CreateJSON round-trip completeness (P1-21)
+# ============================================================
+
+
+
+class TestCreateJSONRoundTrip:
+    """Verify full round-trip preserves structure, not just one field."""
+
+    def test_full_structure_preserved(self, tmp_path, shelve_test_cleanup):
+        import scripts.masterdb2 as mdb2
+
+        json_path = str(tmp_path / "json" / "RoundTrip.json")
+        os.makedirs(os.path.dirname(json_path), exist_ok=True)
+        create_masterdb_json(json_path, ["id"], [
+            {"id": "rt-001", "name": "テスト", "description": "説明テスト", "score": 42},
+        ])
+
+        xlsx_path = str(tmp_path / "drive" / "RoundTrip.xlsx")
+        os.makedirs(os.path.dirname(xlsx_path), exist_ok=True)
+        create_masterdb_xlsx(xlsx_path, None, [
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "rt-001",
+             "ID": "name", "원문": "テスト", "번역": "테스트", "설명": ""},
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "rt-001",
+             "ID": "description", "원문": "説明テスト", "번역": "설명 테스트", "설명": ""},
+        ])
+
+        output_dir = str(tmp_path / "output")
+        os.makedirs(output_dir, exist_ok=True)
+
+        saved = {
+            "json": mdb2.MASTERDB_JSON_PATH,
+            "drive": mdb2.MASTERDB2_DRIVE_PATH,
+            "output": mdb2.MASTERDB_OUTPUT_PATH,
+        }
+        mdb2.MASTERDB_JSON_PATH = str(tmp_path / "json")
+        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive")
+        mdb2.MASTERDB_OUTPUT_PATH = output_dir
+        try:
+            CreateJSON("RoundTrip")
+        finally:
+            mdb2.MASTERDB_JSON_PATH = saved["json"]
+            mdb2.MASTERDB2_DRIVE_PATH = saved["drive"]
+            mdb2.MASTERDB_OUTPUT_PATH = saved["output"]
+
+        with open(os.path.join(output_dir, "RoundTrip.json"), "r", encoding="utf-8") as f:
+            result = json.load(f)
+
+        # Rules block preserved
+        assert result["rules"]["primaryKeys"] == ["id"]
+        # Data count preserved
+        assert len(result["data"]) == 1
+        # Primary key preserved
+        assert result["data"][0]["id"] == "rt-001"
+        # Both fields translated
+        assert result["data"][0]["name"] == "테스트"
+        assert result["data"][0]["description"] == "설명 테스트"
+        # Non-translatable field preserved
+        assert result["data"][0]["score"] == 42
+
+
+# ============================================================
+# ADV: output TXT structural integrity (P2-1)
+# ============================================================
+
+
+
+class TestOverrideExceptionBranch:
+    """traverse() exception should not corrupt other data items."""
+
+    def test_key_error_in_traverse(self, shelve_test_cleanup):
+        """Missing key in data should be caught, not crash."""
+        json_data = {
+            "rules": {"primaryKeys": ["id"]},
+            "data": [
+                {"id": "x", "name": "テスト"},
+            ],
+        }
+        records = [
+            # Path points to a field that doesn't exist
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "x",
+             "ID": "missing_field.sub", "원문": "x", "번역": "y", "설명": ""},
+            # Valid record
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "x",
+             "ID": "name", "원문": "テスト", "번역": "테스트", "설명": ""},
+        ]
+
+        result = OverrideRecordToJson(json_data, records)
+
+        # Valid translation should still be applied
+        assert result["data"][0]["name"] == "테스트"
+
+
+# ============================================================
+# P3: DataFrame/WriteXlsx cell value verification (P3-5/6)
+# ============================================================
+
+
+
+class TestDataToRecordEdgeCases:
+    """DataToRecord with unusual data structures."""
+
+    def test_empty_string_list_skipped(self, shelve_test_cleanup):
+        """List of empty strings should not produce records (not exportable)."""
+        data = {"id": "x", "tags": ["", "", ""]}
+        records = DataToRecord("Achievement", data)
+        # Empty strings are ASCII-only → check_need_export returns False
+        tag_records = [r for r in records if r.get("ID", "").startswith("tags")]
+        assert len(tag_records) == 0
+
+    def test_integer_list_no_crash(self, shelve_test_cleanup):
+        """List of integers should not crash (silently skipped)."""
+        data = {"id": "x", "name": "テスト", "scores": [100, 200, 300]}
+        records = DataToRecord("Achievement", data)
+        # scores should not appear (integers are not translatable)
+        score_records = [r for r in records if "scores" in r.get("ID", "")]
+        assert len(score_records) == 0
+
+
+# ============================================================
+# P3: Generic lyrics \\r\\n expansion (P3-17)
+# ============================================================
+
+
+
+
+class TestMasterdbXlsxCellValues:
+    """Verify actual cell values after MasterDB xlsx write."""
+
+    def test_masterdb_write_xlsx_values(self, tmp_path):
+        import scripts.masterdb2 as mdb2
+
+        records = [
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "test-001",
+             "ID": "name", "원문": "テスト名前", "번역": "테스트이름", "설명": "메모"},
+        ]
+        saved = mdb2.MASTERDB2_DRIVE_PATH
+        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path)
+        try:
+            WriteXlsx("CellTest", records)
+        finally:
+            mdb2.MASTERDB2_DRIVE_PATH = saved
+
+        result = pd.read_excel(str(tmp_path / "CellTest.xlsx"), engine="openpyxl")
+        assert result.iloc[0]["원문"] == "テスト名前"
+        assert result.iloc[0]["번역"] == "테스트이름"
+        assert result.iloc[0]["KEY VALUE 0"] == "test-001"
+
+
+# ============================================================
+# P3: TxtToXlsx cell value verification (P3-7/8)
+# ============================================================
+
+

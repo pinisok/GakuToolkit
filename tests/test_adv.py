@@ -773,3 +773,304 @@ class TestFilterAdvFiles:
 
     def test_empty_input(self):
         assert _filter_adv_files([]) == []
+
+
+# ============================================================
+# Conversion correctness tests (merged from test_conversion_correctness.py)
+# ============================================================
+
+class TestDuplicateSourceText:
+    """Two identical messages in the same file must each get their own translation."""
+
+    def test_both_translations_applied(self, tmp_path):
+        txt_path = str(tmp_path / "original.txt")
+        create_adv_txt(txt_path, [
+            {"tag": "message", "text": "同じテキスト", "name": "A"},
+            {"tag": "message", "text": "同じテキスト", "name": "B"},
+        ])
+
+        xlsx_path = str(tmp_path / "test.xlsx")
+        create_adv_xlsx(xlsx_path, [
+            {"id": "0000000000000", "name": "A", "translated name": "에이",
+             "text": "同じテキスト", "translated text": "첫번째 번역"},
+            {"id": "0000000000000", "name": "B", "translated name": "비",
+             "text": "同じテキスト", "translated text": "두번째 번역"},
+        ])
+
+        output_path = str(tmp_path / "output.txt")
+        XlsxToTxt(xlsx_path, output_path, txt_path)
+
+        with open(output_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        assert "첫번째 번역" in content
+        assert "두번째 번역" in content
+        # Original should be fully replaced
+        assert "同じテキスト" not in content
+
+
+# ============================================================
+# ADV: = escape in translated text (P1-9)
+# ============================================================
+
+
+
+class TestEqualsEscape:
+    """Translated text containing = must be escaped to \\= in output TXT."""
+
+    def test_equals_escaped(self, tmp_path):
+        txt_path = str(tmp_path / "original.txt")
+        create_adv_txt(txt_path, [
+            {"tag": "message", "text": "テスト", "name": "A"},
+        ])
+
+        xlsx_path = str(tmp_path / "test.xlsx")
+        create_adv_xlsx(xlsx_path, [
+            {"id": "0000000000000", "name": "A", "translated name": "",
+             "text": "テスト", "translated text": "점수=100점"},
+        ])
+
+        output_path = str(tmp_path / "output.txt")
+        XlsxToTxt(xlsx_path, output_path, txt_path)
+
+        with open(output_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        assert "점수\\=100점" in content
+        assert "text=점수=100점" not in content  # unescaped = must not appear
+
+    def test_already_escaped_equals_not_double_escaped(self, tmp_path):
+        """\\= should not become \\\\="""
+        txt_path = str(tmp_path / "original.txt")
+        create_adv_txt(txt_path, [
+            {"tag": "message", "text": "テスト", "name": "A"},
+        ])
+
+        xlsx_path = str(tmp_path / "test.xlsx")
+        create_adv_xlsx(xlsx_path, [
+            {"id": "0000000000000", "name": "A", "translated name": "",
+             "text": "テスト", "translated text": "이미\\=이스케이프됨"},
+        ])
+
+        output_path = str(tmp_path / "output.txt")
+        XlsxToTxt(xlsx_path, output_path, txt_path)
+
+        with open(output_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Already escaped \= should stay as \=, not become \\=
+        assert "이미\\=이스케이프됨" in content
+
+
+# ============================================================
+# ADV: row count shrink (P1-12)
+# ============================================================
+
+
+
+class TestUpdateDataFrameShrink:
+    """When new TXT has fewer rows than existing XLSX, old rows must be dropped."""
+
+    def test_shrink_returns_fewer_rows(self, tmp_path):
+        xlsx_path = str(tmp_path / "existing.xlsx")
+        create_adv_xlsx(xlsx_path, [
+            {"id": "0", "name": "A", "translated name": "",
+             "text": "行1", "translated text": "줄1"},
+            {"id": "0", "name": "B", "translated name": "",
+             "text": "行2", "translated text": "줄2"},
+            {"id": "0", "name": "C", "translated name": "",
+             "text": "行3", "translated text": "줄3"},
+        ])
+
+        # New source has only 2 rows (행3 removed)
+        new_df = pd.DataFrame([
+            {"id": "0", "name": "A", "translated name": "",
+             "text": "行1", "translated text": ""},
+            {"id": "0", "name": "B", "translated name": "",
+             "text": "行2", "translated text": ""},
+        ])
+
+        with open(xlsx_path, "rb") as fp:
+            result_df, warnings = _internalUpdateDataFrame(new_df, fp)
+
+        records = result_df.to_dict(orient="records")
+        assert len(records) == 2  # Must shrink to 2, not 3
+        assert records[0]["translated text"] == "줄1"  # Preserved
+        assert records[1]["translated text"] == "줄2"  # Preserved
+        assert any("줄 수 변경" in w for w in warnings)
+
+    def test_unchanged_rows_have_empty_comments(self, tmp_path):
+        """In a multi-row update, unchanged rows must have comments == ''."""
+        xlsx_path = str(tmp_path / "existing.xlsx")
+        create_adv_xlsx(xlsx_path, [
+            {"id": "0", "name": "A", "translated name": "",
+             "text": "変わらない", "translated text": "안바뀜"},
+            {"id": "0", "name": "B", "translated name": "",
+             "text": "変わる前", "translated text": "바뀌기전"},
+        ])
+
+        new_df = pd.DataFrame([
+            {"id": "0", "name": "A", "translated name": "",
+             "text": "変わらない", "translated text": ""},
+            {"id": "0", "name": "B", "translated name": "",
+             "text": "変わった後", "translated text": ""},
+        ])
+
+        with open(xlsx_path, "rb") as fp:
+            result_df, warnings = _internalUpdateDataFrame(new_df, fp)
+
+        records = result_df.to_dict(orient="records")
+        assert records[0]["comments"] == ""  # Unchanged row: empty comment
+        assert "원본 문자열이 수정되었습니다" in records[1]["comments"]  # Changed row
+
+
+# ============================================================
+# MasterDB: OverrideRecordToJson assertion completeness (P1-13)
+# ============================================================
+
+
+
+class TestOutputTxtStructure:
+    """Verify game-engine syntax is preserved, not just translated string presence."""
+
+    def test_text_field_syntax_preserved(self, tmp_path):
+        """Output must have text=TRANSLATED, not bare translated string."""
+        txt_path = str(tmp_path / "original.txt")
+        create_adv_txt(txt_path, [
+            {"tag": "message", "text": "テスト", "name": "麻央"},
+        ])
+
+        xlsx_path = str(tmp_path / "test.xlsx")
+        create_adv_xlsx(xlsx_path, [
+            {"id": "0000000000000", "name": "麻央", "translated name": "마오",
+             "text": "テスト", "translated text": "테스트 번역"},
+        ])
+
+        output_path = str(tmp_path / "output.txt")
+        XlsxToTxt(xlsx_path, output_path, txt_path)
+
+        with open(output_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Must have text=TRANSLATED (game engine format)
+        assert "text=테스트 번역" in content
+        # Must have name=TRANSLATED
+        assert "name=마오" in content
+        # Original Japanese must not remain
+        assert "text=テスト" not in content
+        assert "name=麻央" not in content
+
+
+# ============================================================
+# P2: CSV has more rows than TXT (P2-11)
+# ============================================================
+
+
+
+class TestCsvMoreRowsThanTxt:
+    """Extra CSV rows beyond TXT messages should be silently ignored."""
+
+    def test_extra_csv_rows_no_crash(self, tmp_path):
+        txt_path = str(tmp_path / "original.txt")
+        create_adv_txt(txt_path, [
+            {"tag": "message", "text": "一つだけ", "name": "A"},
+        ])
+
+        # XLSX has 2 rows, but TXT has only 1 message
+        xlsx_path = str(tmp_path / "test.xlsx")
+        create_adv_xlsx(xlsx_path, [
+            {"id": "0000000000000", "name": "A", "translated name": "",
+             "text": "一つだけ", "translated text": "하나만"},
+            {"id": "0000000000000", "name": "B", "translated name": "",
+             "text": "余分な行", "translated text": "여분의 행"},
+        ])
+
+        output_path = str(tmp_path / "output.txt")
+        XlsxToTxt(xlsx_path, output_path, txt_path)
+
+        with open(output_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "하나만" in content
+        # Extra row should not appear in output
+        assert "여분의 행" not in content
+
+
+# ============================================================
+# P2: name in message text (P2-22)
+# ============================================================
+
+
+
+class TestNameInMessageText:
+    """Character name appearing inside message text must not be replaced."""
+
+    def test_name_replace_only_in_name_field(self, tmp_path):
+        txt_path = str(tmp_path / "original.txt")
+        create_adv_txt(txt_path, [
+            # Message where the character name "麻央" also appears in text
+            {"tag": "message", "text": "麻央が来た", "name": "麻央"},
+        ])
+
+        xlsx_path = str(tmp_path / "test.xlsx")
+        create_adv_xlsx(xlsx_path, [
+            {"id": "0000000000000", "name": "麻央", "translated name": "마오",
+             "text": "麻央が来た", "translated text": "마오가 왔다"},
+        ])
+
+        output_path = str(tmp_path / "output.txt")
+        XlsxToTxt(xlsx_path, output_path, txt_path)
+
+        with open(output_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        assert "text=마오가 왔다" in content
+        assert "name=마오" in content
+        # The text field should contain "마오가 왔다", not have "마오" double-replaced
+
+
+# ============================================================
+# P2: Serialize/Deserialize double substitution (P2-19)
+# ============================================================
+
+
+
+class TestTxtToXlsxValues:
+    """Verify TxtToXlsx writes correct cell values."""
+
+    def test_new_xlsx_has_source_text(self, tmp_path):
+        txt_path = str(tmp_path / "adv_test.txt")
+        create_adv_txt(txt_path, [
+            {"tag": "message", "text": "検証テスト", "name": "テスター"},
+        ])
+
+        xlsx_path = str(tmp_path / "adv_test.xlsx")
+        TxtToXlsx(txt_path, xlsx_path, "adv_test.txt")
+
+        df = pd.read_excel(xlsx_path, engine="openpyxl")
+        records = df.to_dict(orient="records")
+        # First data row (before info/translator rows)
+        assert any(r.get(df.columns[3]) == "検証テスト" for r in records)
+
+
+# ============================================================
+# P3: DataToRecord edge cases (P3-15/16)
+# ============================================================
+
+
+
+class TestFilterAdvFilesStructure:
+    """Verify returned tuple slots are correct, not just filename."""
+
+    def test_input_path_is_rel_path(self):
+        file_paths = [
+            ("/abs/path/adv_cidol-amao_01.txt", "rel/adv_cidol-amao_01.txt", "adv_cidol-amao_01.txt"),
+        ]
+        result = _filter_adv_files(file_paths)
+        assert len(result) == 1
+        input_path, output_path, filename = result[0]
+        # input_path should be the rel_path from the input tuple
+        assert input_path == "rel/adv_cidol-amao_01.txt"
+        # filename should be unchanged
+        assert filename == "adv_cidol-amao_01.txt"
+        # output_path should be xlsx, not txt
+        assert output_path.endswith(".xlsx")

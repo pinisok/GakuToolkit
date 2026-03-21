@@ -11,6 +11,7 @@ from scripts.generic import (
     GENERIC_FILE_LIST,
 )
 from scripts.helper import (
+    Serialize, Deserialize,
     Serialize as GenericSerialize,
     Deserialize as GenericDeserialize,
 )
@@ -226,3 +227,61 @@ class TestRadioactiveMarkerDeserialize:
         with open(output_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         assert data["원문"] == "줄1\r줄2"
+
+
+# ============================================================
+# Conversion correctness tests (merged from test_conversion_correctness.py)
+# ============================================================
+
+class TestLyricsEscapeExpansion:
+    """Lyrics keys with \\r\\n should expand to actual \\r\\n in JSON."""
+
+    def test_backslash_rn_expanded(self, tmp_path):
+        lyrics_dir = tmp_path / "lyrics"
+        lyrics_dir.mkdir()
+        xlsx_path = str(lyrics_dir / "song.xlsx")
+        create_lyrics_xlsx(xlsx_path, [
+            {"A": "歌詞1行\\r\\n歌詞2行", "B": "가사1줄\\r\\n가사2줄"},
+        ])
+        output_path = str(lyrics_dir / "song.json")
+
+        GenericXlsxToJson(xlsx_path, output_path)
+
+        with open(output_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        # Keys and values with \\r\\n should be expanded to actual \r\n
+        keys = list(data.keys())
+        assert any("\r\n" in k for k in keys)
+
+
+# ============================================================
+# P3: Localization numeric translation column (P3-18)
+# ============================================================
+
+
+
+class TestSerializeDeserializeEdgeCases:
+    """Test that \\r and ☢ don't cause double substitution."""
+
+    def test_backslash_r_and_radioactive_coexist(self):
+        """A string with both \\r and ☢ should deserialize each once."""
+        input_str = "line1\\rline2☢line3"
+        result = Deserialize(input_str)
+        # \\r → \r, ☢ → \r
+        assert result == "line1\rline2\rline3"
+        # Must NOT have double \r\r
+        assert "\r\r" not in result
+
+    def test_serialize_then_deserialize_roundtrip(self):
+        """Serialize → Deserialize should return original (minus ☢ ambiguity)."""
+        original = "line1\rline2\tline3"
+        serialized = Serialize(original)
+        deserialized = Deserialize(serialized)
+        assert deserialized == original
+
+
+# ============================================================
+# P2: OverrideRecordToJson exception branch (P2-14)
+# ============================================================
+
+
