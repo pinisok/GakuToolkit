@@ -75,6 +75,17 @@ class TestPathNormalizeForPk:
         assert path_normalize_for_pk("") == ""
 
 
+class TestDeserialize:
+    def test_basic_deserialize(self):
+        from scripts.masterdb2_record import _Deserialize
+        assert _Deserialize("hello\\rworld") == "hello\rworld"
+        assert _Deserialize("tab\\there") == "tab\there"
+
+    def test_no_escapes(self):
+        from scripts.masterdb2_record import _Deserialize
+        assert _Deserialize("plain text") == "plain text"
+
+
 class TestRuleKeyTranslateMap:
     def test_has_achievement(self):
         assert "Achievement" in rule_key_translate_map
@@ -1112,6 +1123,41 @@ class TestGetPrevArrayElement:
         )
         assert result is None  # card-OTHER doesn't match card-001
 
+    def test_json_prev_is_plain_string(self):
+        """JSON prev element is a plain string (not dict)."""
+        from scripts.masterdb2 import _get_prev_array_element
+        records = [
+            {"ID": "produceDescriptions[1].text", "원문": "test", "번역": "테스트",
+             "KEY ID 0": "id", "KEY VALUE 0": "card-001"},
+        ]
+        json_data = {
+            "data": [
+                {"id": "card-001", "produceDescriptions": ["plain_string", "test"]}
+            ]
+        }
+        result = _get_prev_array_element(
+            records[0], records, "produceDescriptions", 1, json_data
+        )
+        assert result == "plain_string"
+
+    def test_json_pk_mismatch_skips(self):
+        """JSON entries with wrong PK should be skipped."""
+        from scripts.masterdb2 import _get_prev_array_element
+        records = [
+            {"ID": "produceDescriptions[1].text", "원문": "test", "번역": "테스트",
+             "KEY ID 0": "id", "KEY VALUE 0": "card-001"},
+        ]
+        json_data = {
+            "data": [
+                {"id": "card-OTHER", "produceDescriptions": [{"text": "wrong"}]},
+                {"id": "card-001", "produceDescriptions": [{"text": "correct"}, {"text": "test"}]},
+            ]
+        }
+        result = _get_prev_array_element(
+            records[0], records, "produceDescriptions", 1, json_data
+        )
+        assert result == "correct"
+
     def test_prev_index_zero(self):
         """Index 0 has no previous element."""
         from scripts.masterdb2 import _get_prev_array_element
@@ -1123,6 +1169,47 @@ class TestGetPrevArrayElement:
             records[0], records, "produceDescriptions", 0, None
         )
         assert result is None
+
+
+class TestMatchKrRecord:
+    """Direct unit tests for _match_kr_record."""
+
+    def test_exact_match(self):
+        from scripts.masterdb2 import _match_kr_record
+        jp = {"ID": "name", "원문": "テスト"}
+        kr = [(0, {"ID": "name", "원문": "テスト"})]
+        idx, rec = _match_kr_record(jp, list(jp.keys()), kr)
+        assert rec is not None
+        assert idx == 0
+
+    def test_id_mismatch_near_match(self):
+        from scripts.masterdb2 import _match_kr_record
+        jp = {"ID": "desc", "원문": "テスト"}
+        kr = [(5, {"ID": "name", "원문": "テスト"})]
+        idx, rec = _match_kr_record(jp, list(jp.keys()), kr)
+        assert rec is None
+        assert idx == 5  # near-match
+
+    def test_original_mismatch(self):
+        from scripts.masterdb2 import _match_kr_record
+        jp = {"ID": "name", "원문": "新テスト"}
+        kr = [(3, {"ID": "name", "원문": "旧テスト"})]
+        idx, rec = _match_kr_record(jp, list(jp.keys()), kr)
+        assert rec is None
+        assert idx == 3
+
+    def test_duplicate_match_uses_first(self):
+        from scripts.masterdb2 import _match_kr_record
+        jp = {"ID": "name", "원문": "テスト"}
+        kr = [
+            (0, {"ID": "name", "원문": "テスト"}),
+            (1, {"ID": "name", "원문": "テスト"}),
+        ]
+        idx, rec = _match_kr_record(jp, list(jp.keys()), kr)
+        assert rec is kr[0][1]
+        # Both should be touched
+        assert kr[0][1].get("_GAKU_TOUCHED") is True
+        assert kr[1][1].get("_GAKU_TOUCHED") is True
 
 
 class TestApplyParticleCorrection:
@@ -1258,6 +1345,59 @@ class TestUpdateXlsxParticleCorrection:
         assert len(desc2) == 1
         # 집중 ends with consonant (중), so 가 → 이
         assert desc2[0]["번역"] == "이 0일 때, 사용 가능"
+
+
+class TestLoadOldKV:
+    """Test LoadOldKV: read old v1 xlsx and extract text→trans mapping."""
+
+    def test_extracts_translations(self, tmp_path):
+        from scripts.masterdb2_io import LoadOldKV
+        # Create a v1-format xlsx with text/trans columns
+        df = pd.DataFrame([
+            {"text": "テスト", "trans": "테스트"},
+            {"text": "空白", "trans": ""},  # empty trans → skipped
+            {"text": "Same", "trans": "Same"},  # same → skipped
+        ])
+        xlsx_path = str(tmp_path / "TestFile.xlsx")
+        df.to_excel(xlsx_path, index=False, engine="xlsxwriter")
+
+        saved = _paths.MASTERDB_DRIVE_PATH
+        _paths.MASTERDB_DRIVE_PATH = str(tmp_path)
+        try:
+            result = LoadOldKV("TestFile")
+        finally:
+            _paths.MASTERDB_DRIVE_PATH = saved
+
+        assert result["テスト"] == "테스트"
+        assert "空白" not in result  # empty trans
+        assert "Same" not in result  # same text/trans
+
+    def test_strips_leading_quote(self, tmp_path):
+        from scripts.masterdb2_io import LoadOldKV
+        df = pd.DataFrame([
+            {"text": "原文", "trans": "'번역값"},
+        ])
+        xlsx_path = str(tmp_path / "QuoteTest.xlsx")
+        df.to_excel(xlsx_path, index=False, engine="xlsxwriter")
+
+        saved = _paths.MASTERDB_DRIVE_PATH
+        _paths.MASTERDB_DRIVE_PATH = str(tmp_path)
+        try:
+            result = LoadOldKV("QuoteTest")
+        finally:
+            _paths.MASTERDB_DRIVE_PATH = saved
+
+        assert result["原文"] == "번역값"
+
+    def test_file_not_found(self, tmp_path):
+        from scripts.masterdb2_io import LoadOldKV
+        saved = _paths.MASTERDB_DRIVE_PATH
+        _paths.MASTERDB_DRIVE_PATH = str(tmp_path)
+        try:
+            with pytest.raises(FileNotFoundError):
+                LoadOldKV("NonExistent")
+        finally:
+            _paths.MASTERDB_DRIVE_PATH = saved
 
 
 class TestWriteXlsx:
@@ -1652,6 +1792,63 @@ class TestCreateJSONRoundTrip:
 # ADV: output TXT structural integrity (P2-1)
 # ============================================================
 
+
+
+class TestTraverseEdgeBranches:
+    """Cover rare branches in _traverse_and_apply."""
+
+    def test_list_translation_invalid_format(self, shelve_test_cleanup):
+        """List translation without [LA_F] prefix returns None (no crash)."""
+        json_data = {
+            "data": [{"id": "x", "tags": ["タグA", "タグB"]}],
+        }
+        records = [
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "x",
+             "ID": "tags", "원문": "[LA_F]タグA[LA_N_F]タグB",
+             "번역": "invalid_no_prefix", "설명": ""},
+        ]
+        result = OverrideRecordToJson(json_data, records)
+        # Should not override (invalid format)
+        assert result["data"][0]["tags"] == ["タグA", "タグB"]
+
+    def test_list_translation_mismatch(self, shelve_test_cleanup):
+        """List original text mismatch → no override."""
+        json_data = {
+            "data": [{"id": "x", "tags": ["A", "B"]}],
+        }
+        records = [
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "x",
+             "ID": "tags", "원문": "[LA_F]C[LA_N_F]D",
+             "번역": "[LA_F]씨[LA_N_F]디", "설명": ""},
+        ]
+        result = OverrideRecordToJson(json_data, records)
+        assert result["data"][0]["tags"] == ["A", "B"]
+
+    def test_dict_with_short_subkey(self, shelve_test_cleanup):
+        """Subkey pointing to dict but no remaining path → warning, no crash."""
+        json_data = {
+            "data": [{"id": "x", "nested": {"inner": "val"}}],
+        }
+        records = [
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "x",
+             "ID": "nested", "원문": "val", "번역": "값", "설명": ""},
+        ]
+        result = OverrideRecordToJson(json_data, records)
+        # nested is a dict, ID has no ".inner" suffix → should not crash
+        assert result["data"][0]["nested"]["inner"] == "val"
+
+    def test_unknown_type_in_traverse(self, shelve_test_cleanup):
+        """Non-dict/str/list value at leaf → warning, returns False."""
+        json_data = {
+            "data": [{"id": "x", "count": 42}],
+        }
+        records = [
+            {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "x",
+             "ID": "count", "원문": "42", "번역": "42개", "설명": ""},
+        ]
+        result = OverrideRecordToJson(json_data, records)
+        # int type → no override
+        assert result["data"][0]["count"] == 42
 
 
 class TestOverrideExceptionBranch:
