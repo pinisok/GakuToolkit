@@ -4,15 +4,15 @@ import os
 import sys
 import re
 import shutil
-import multiprocessing
 from copy import deepcopy
 
 import pandas as pd
 import openpyxl
 import openpyxl.utils.escape
 import xlsxwriter
-import tqdm
 import yaml
+
+from .parallel import run_parallel
 
 from .helper import *
 from .log import *
@@ -168,7 +168,7 @@ def _convert_single_yaml(file_path, file_name, loader, save_fn):
 def convert_yaml_types(obj):
     """Multiprocessing-compatible wrapper for _convert_single_yaml."""
     file_path, file = obj
-    _convert_single_yaml(file_path, file, _CustomLoader, _save_func)
+    return _convert_single_yaml(file_path, file, _CustomLoader, _save_func)
 
 
 def convert_yaml_types_in_parallel(exception_list=None):
@@ -189,13 +189,13 @@ def convert_yaml_types_in_parallel(exception_list=None):
         raise FileNotFoundError(f"Folder {folder_path} is not exists")
     all_files = Helper_GetFilesFromDir(folder_path, ".yaml")
     file_list = _filter_file_list(all_files, exception_list)
-    file_list_size = len(file_list)
-    LOG_INFO(2, f"Converting {file_list_size} MasterDB files from yaml to json")
-    pool = multiprocessing.Pool()
-    for _ in tqdm.tqdm(pool.imap_unordered(convert_yaml_types, [(abs_path, filename) for abs_path, rel_path, filename in file_list]), total=file_list_size):
-        pass
-    pool.close()
-    pool.join()
+
+    LOG_INFO(2, f"Converting {len(file_list)} MasterDB files from yaml to json")
+    run_parallel(
+        convert_yaml_types,
+        [(abs_path, filename) for abs_path, rel_path, filename in file_list],
+        desc="YAML→JSON",
+    )
 
     os.chdir(ORIGIN_CWD)
     return [filename[:-5] for _, _, filename in file_list]

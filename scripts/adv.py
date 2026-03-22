@@ -1,4 +1,4 @@
-import os, re, csv, difflib, multiprocessing, tqdm
+import os, re, csv, difflib
 from typing import Callable, Optional, Union
 from io import StringIO
 from datetime import datetime
@@ -449,22 +449,14 @@ def _filter_adv_files(file_paths):
 def _convert_xlsx_to_txt_batch(drive_file_paths):
     """Run XlsxToTxt in parallel via multiprocessing Pool.
     Returns (error_file_list, converted_file_list)."""
-    converted_file_list = []
-    error_file_list = []
-    file_list_size = len(drive_file_paths)
-    pool = multiprocessing.Pool()
-    with tqdm.tqdm(total=file_list_size) as pbar:
-        for result in pool.imap_unordered(
-            XlsxToTxt_parallels,
-            [(abs_path, filename) for abs_path, rel_path, filename in drive_file_paths],
-        ):
-            pbar.update()
-            pbar.refresh()
-            error_file_list += result[0]
-            converted_file_list += result[1]
-    pool.close()
-    pool.join()
-    return error_file_list, converted_file_list
+    from .parallel import run_parallel, collect_errors_and_successes
+
+    results = run_parallel(
+        XlsxToTxt_parallels,
+        [(abs_path, filename) for abs_path, rel_path, filename in drive_file_paths],
+        desc="XLSX→TXT",
+    )
+    return collect_errors_and_successes(results)
 
 
 # 업데이트 반영
@@ -486,12 +478,10 @@ def UpdateOriginalToDrive():
 
     file_list = _filter_adv_files(original_file_paths)
     LOG_INFO(2, f"Updating {len(file_list)} adv files")
-    all_warnings = {}
-    pool = multiprocessing.Pool()
-    for result in tqdm.tqdm(pool.imap_unordered(TxtToXlsx_parallels, file_list), total=len(file_list)):
-        all_warnings.update(result)
-    pool.close()
-    pool.join()
+    from .parallel import run_parallel, collect_dict_results
+
+    results = run_parallel(TxtToXlsx_parallels, file_list, desc="TXT→XLSX")
+    all_warnings = collect_dict_results(results)
 
     return file_list, all_warnings
 
