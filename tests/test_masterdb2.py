@@ -161,12 +161,12 @@ class TestReadXlsxSynthetic:
              "ID": "description", "원문": "テスト説明", "번역": "테스트 설명", "설명": ""},
         ])
 
-        original_path = mdb2.MASTERDB2_DRIVE_PATH
-        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path)
+        original_path = _paths.MASTERDB2_DRIVE_PATH
+        _paths.MASTERDB2_DRIVE_PATH = str(tmp_path)
         try:
             records = ReadXlsx("TestType")
         finally:
-            mdb2.MASTERDB2_DRIVE_PATH = original_path
+            _paths.MASTERDB2_DRIVE_PATH = original_path
 
         assert len(records) == 2
         assert records[0]["원문"] == "テスト名前"
@@ -177,12 +177,12 @@ class TestReadXlsxSynthetic:
         """ReadXlsx for non-existent file returns empty list."""
         import scripts.masterdb2 as mdb2
 
-        original_path = mdb2.MASTERDB2_DRIVE_PATH
-        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path)
+        original_path = _paths.MASTERDB2_DRIVE_PATH
+        _paths.MASTERDB2_DRIVE_PATH = str(tmp_path)
         try:
             records = ReadXlsx("NonExistent")
         finally:
-            mdb2.MASTERDB2_DRIVE_PATH = original_path
+            _paths.MASTERDB2_DRIVE_PATH = original_path
 
         assert records == []
 
@@ -199,12 +199,12 @@ class TestReadWriteJsonSynthetic:
             {"id": "test-001", "name": "テスト", "description": "説明"},
         ])
 
-        original_path = mdb2.MASTERDB_JSON_PATH
-        mdb2.MASTERDB_JSON_PATH = str(tmp_path)
+        original_path = _paths.MASTERDB_JSON_PATH
+        _paths.MASTERDB_JSON_PATH = str(tmp_path)
         try:
             data = ReadJson("TestType")
         finally:
-            mdb2.MASTERDB_JSON_PATH = original_path
+            _paths.MASTERDB_JSON_PATH = original_path
 
         assert "rules" in data
         assert "data" in data
@@ -221,12 +221,12 @@ class TestReadWriteJsonSynthetic:
             "data": [{"id": "x", "name": "translated"}],
         }
 
-        original_path = mdb2.MASTERDB_OUTPUT_PATH
-        mdb2.MASTERDB_OUTPUT_PATH = str(tmp_path)
+        original_path = _paths.MASTERDB_OUTPUT_PATH
+        _paths.MASTERDB_OUTPUT_PATH = str(tmp_path)
         try:
             WriteJson("TestOutput", json_data)
         finally:
-            mdb2.MASTERDB_OUTPUT_PATH = original_path
+            _paths.MASTERDB_OUTPUT_PATH = original_path
 
         output_file = str(tmp_path / "TestOutput.json")
         assert os.path.exists(output_file)
@@ -347,6 +347,7 @@ from scripts.masterdb2 import (
     DB_save,
     DB_get,
 )
+import scripts.paths as _paths
 
 
 # ============================================================
@@ -437,12 +438,12 @@ class TestJsonToRecord:
             {"id": "a2", "name": "業績2", "description": "説明2"},
         ])
 
-        original = mdb2.MASTERDB_JSON_PATH
-        mdb2.MASTERDB_JSON_PATH = str(tmp_path)
+        original = _paths.MASTERDB_JSON_PATH
+        _paths.MASTERDB_JSON_PATH = str(tmp_path)
         try:
             records = JsonToRecord("Achievement")
         finally:
-            mdb2.MASTERDB_JSON_PATH = original
+            _paths.MASTERDB_JSON_PATH = original
 
         assert len(records) >= 4  # 2 items × 2 fields each
         ids = {r["KEY VALUE 0"] for r in records}
@@ -638,18 +639,18 @@ class TestCreateJSON:
         os.makedirs(output_dir, exist_ok=True)
 
         # Patch paths
-        saved_json = mdb2.MASTERDB_JSON_PATH
-        saved_drive = mdb2.MASTERDB2_DRIVE_PATH
-        saved_output = mdb2.MASTERDB_OUTPUT_PATH
-        mdb2.MASTERDB_JSON_PATH = str(tmp_path / "json")
-        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive")
-        mdb2.MASTERDB_OUTPUT_PATH = output_dir
+        saved_json = _paths.MASTERDB_JSON_PATH
+        saved_drive = _paths.MASTERDB2_DRIVE_PATH
+        saved_output = _paths.MASTERDB_OUTPUT_PATH
+        _paths.MASTERDB_JSON_PATH = str(tmp_path / "json")
+        _paths.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive")
+        _paths.MASTERDB_OUTPUT_PATH = output_dir
         try:
             CreateJSON("TestCreate")
         finally:
-            mdb2.MASTERDB_JSON_PATH = saved_json
-            mdb2.MASTERDB2_DRIVE_PATH = saved_drive
-            mdb2.MASTERDB_OUTPUT_PATH = saved_output
+            _paths.MASTERDB_JSON_PATH = saved_json
+            _paths.MASTERDB2_DRIVE_PATH = saved_drive
+            _paths.MASTERDB_OUTPUT_PATH = saved_output
 
         output_file = os.path.join(output_dir, "TestCreate.json")
         assert os.path.exists(output_file)
@@ -739,28 +740,28 @@ class TestUpdateXlsx:
         ])
 
         saved = {
-            "json": mdb2.MASTERDB_JSON_PATH,
-            "drive2": mdb2.MASTERDB2_DRIVE_PATH,
-            "drive1": mdb2.MASTERDB_DRIVE_PATH,
+            "json": _paths.MASTERDB_JSON_PATH,
+            "drive2": _paths.MASTERDB2_DRIVE_PATH,
+            "drive1": _paths.MASTERDB_DRIVE_PATH,
         }
-        mdb2.MASTERDB_JSON_PATH = str(tmp_path / "json")
-        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
-        mdb2.MASTERDB_DRIVE_PATH = str(tmp_path / "drive1")
+        _paths.MASTERDB_JSON_PATH = str(tmp_path / "json")
+        _paths.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
+        _paths.MASTERDB_DRIVE_PATH = str(tmp_path / "drive1")
         try:
             from scripts.masterdb2 import UpdateXlsx
             empty_count, _ = UpdateXlsx("Achievement")
         finally:
-            mdb2.MASTERDB_JSON_PATH = saved["json"]
-            mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
-            mdb2.MASTERDB_DRIVE_PATH = saved["drive1"]
+            _paths.MASTERDB_JSON_PATH = saved["json"]
+            _paths.MASTERDB2_DRIVE_PATH = saved["drive2"]
+            _paths.MASTERDB_DRIVE_PATH = saved["drive1"]
 
         assert empty_count >= 1
 
-        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
+        _paths.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
         try:
             records = ReadXlsx("Achievement")
         finally:
-            mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
+            _paths.MASTERDB2_DRIVE_PATH = saved["drive2"]
 
         originals = {r["원문"] for r in records}
         assert "既存" in originals
@@ -791,26 +792,26 @@ class TestUpdateXlsx:
         ])
 
         saved = {
-            "json": mdb2.MASTERDB_JSON_PATH,
-            "drive2": mdb2.MASTERDB2_DRIVE_PATH,
-            "drive1": mdb2.MASTERDB_DRIVE_PATH,
+            "json": _paths.MASTERDB_JSON_PATH,
+            "drive2": _paths.MASTERDB2_DRIVE_PATH,
+            "drive1": _paths.MASTERDB_DRIVE_PATH,
         }
-        mdb2.MASTERDB_JSON_PATH = str(tmp_path / "json")
-        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
-        mdb2.MASTERDB_DRIVE_PATH = str(tmp_path / "drive1")
+        _paths.MASTERDB_JSON_PATH = str(tmp_path / "json")
+        _paths.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
+        _paths.MASTERDB_DRIVE_PATH = str(tmp_path / "drive1")
         try:
             from scripts.masterdb2 import UpdateXlsx
             UpdateXlsx("Achievement")  # returns (count, warnings)
         finally:
-            mdb2.MASTERDB_JSON_PATH = saved["json"]
-            mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
-            mdb2.MASTERDB_DRIVE_PATH = saved["drive1"]
+            _paths.MASTERDB_JSON_PATH = saved["json"]
+            _paths.MASTERDB2_DRIVE_PATH = saved["drive2"]
+            _paths.MASTERDB_DRIVE_PATH = saved["drive1"]
 
-        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
+        _paths.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
         try:
             records = ReadXlsx("Achievement")
         finally:
-            mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
+            _paths.MASTERDB2_DRIVE_PATH = saved["drive2"]
 
         assert any(r["번역"] == "보존될번역" for r in records)
 
@@ -841,25 +842,25 @@ class TestUpdateXlsx:
         ])
 
         saved = {
-            "json": mdb2.MASTERDB_JSON_PATH,
-            "drive2": mdb2.MASTERDB2_DRIVE_PATH,
-            "drive1": mdb2.MASTERDB_DRIVE_PATH,
+            "json": _paths.MASTERDB_JSON_PATH,
+            "drive2": _paths.MASTERDB2_DRIVE_PATH,
+            "drive1": _paths.MASTERDB_DRIVE_PATH,
         }
-        mdb2.MASTERDB_JSON_PATH = str(tmp_path / "json")
-        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
-        mdb2.MASTERDB_DRIVE_PATH = str(tmp_path / "drive1")
+        _paths.MASTERDB_JSON_PATH = str(tmp_path / "json")
+        _paths.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
+        _paths.MASTERDB_DRIVE_PATH = str(tmp_path / "drive1")
         try:
             _, warnings = UpdateXlsx("Achievement")
         finally:
-            mdb2.MASTERDB_JSON_PATH = saved["json"]
-            mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
-            mdb2.MASTERDB_DRIVE_PATH = saved["drive1"]
+            _paths.MASTERDB_JSON_PATH = saved["json"]
+            _paths.MASTERDB2_DRIVE_PATH = saved["drive2"]
+            _paths.MASTERDB_DRIVE_PATH = saved["drive1"]
 
-        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
+        _paths.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
         try:
             records = ReadXlsx("Achievement")
         finally:
-            mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
+            _paths.MASTERDB2_DRIVE_PATH = saved["drive2"]
 
         originals = {r["원문"] for r in records}
         assert "残る" in originals
@@ -893,27 +894,27 @@ class TestUpdateXlsx:
         ])
 
         saved = {
-            "json": mdb2.MASTERDB_JSON_PATH,
-            "drive2": mdb2.MASTERDB2_DRIVE_PATH,
-            "drive1": mdb2.MASTERDB_DRIVE_PATH,
+            "json": _paths.MASTERDB_JSON_PATH,
+            "drive2": _paths.MASTERDB2_DRIVE_PATH,
+            "drive1": _paths.MASTERDB_DRIVE_PATH,
         }
-        mdb2.MASTERDB_JSON_PATH = str(tmp_path / "json")
-        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
-        mdb2.MASTERDB_DRIVE_PATH = str(tmp_path / "drive1")
+        _paths.MASTERDB_JSON_PATH = str(tmp_path / "json")
+        _paths.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
+        _paths.MASTERDB_DRIVE_PATH = str(tmp_path / "drive1")
         try:
             empty_count, _ = UpdateXlsx("Achievement")
         finally:
-            mdb2.MASTERDB_JSON_PATH = saved["json"]
-            mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
-            mdb2.MASTERDB_DRIVE_PATH = saved["drive1"]
+            _paths.MASTERDB_JSON_PATH = saved["json"]
+            _paths.MASTERDB2_DRIVE_PATH = saved["drive2"]
+            _paths.MASTERDB_DRIVE_PATH = saved["drive1"]
 
         assert empty_count >= 2
 
-        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
+        _paths.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
         try:
             records = ReadXlsx("Achievement")
         finally:
-            mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
+            _paths.MASTERDB2_DRIVE_PATH = saved["drive2"]
 
         originals = [r["원문"] for r in records]
         assert "ベース" in originals
@@ -1232,25 +1233,25 @@ class TestUpdateXlsxParticleCorrection:
         ])
 
         saved = {
-            "json": mdb2.MASTERDB_JSON_PATH,
-            "drive2": mdb2.MASTERDB2_DRIVE_PATH,
-            "drive1": mdb2.MASTERDB_DRIVE_PATH,
+            "json": _paths.MASTERDB_JSON_PATH,
+            "drive2": _paths.MASTERDB2_DRIVE_PATH,
+            "drive1": _paths.MASTERDB_DRIVE_PATH,
         }
-        mdb2.MASTERDB_JSON_PATH = str(tmp_path / "json")
-        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
-        mdb2.MASTERDB_DRIVE_PATH = str(tmp_path / "drive1")
+        _paths.MASTERDB_JSON_PATH = str(tmp_path / "json")
+        _paths.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
+        _paths.MASTERDB_DRIVE_PATH = str(tmp_path / "drive1")
         try:
             UpdateXlsx("ProduceItem")
         finally:
-            mdb2.MASTERDB_JSON_PATH = saved["json"]
-            mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
-            mdb2.MASTERDB_DRIVE_PATH = saved["drive1"]
+            _paths.MASTERDB_JSON_PATH = saved["json"]
+            _paths.MASTERDB2_DRIVE_PATH = saved["drive2"]
+            _paths.MASTERDB_DRIVE_PATH = saved["drive1"]
 
-        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
+        _paths.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive2")
         try:
             records = ReadXlsx("ProduceItem")
         finally:
-            mdb2.MASTERDB2_DRIVE_PATH = saved["drive2"]
+            _paths.MASTERDB2_DRIVE_PATH = saved["drive2"]
 
         # Find the record for [2].text
         desc2 = [r for r in records if "produceDescriptions[2]" in r.get("ID", "")]
@@ -1268,12 +1269,12 @@ class TestWriteXlsx:
              "ID": "name", "원문": "テスト", "번역": "테스트", "설명": ""},
         ]
 
-        saved = mdb2.MASTERDB2_DRIVE_PATH
-        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path)
+        saved = _paths.MASTERDB2_DRIVE_PATH
+        _paths.MASTERDB2_DRIVE_PATH = str(tmp_path)
         try:
             WriteXlsx("WriteTest", records)
         finally:
-            mdb2.MASTERDB2_DRIVE_PATH = saved
+            _paths.MASTERDB2_DRIVE_PATH = saved
 
         output_file = str(tmp_path / "WriteTest.xlsx")
         assert os.path.exists(output_file)
@@ -1617,19 +1618,19 @@ class TestCreateJSONRoundTrip:
         os.makedirs(output_dir, exist_ok=True)
 
         saved = {
-            "json": mdb2.MASTERDB_JSON_PATH,
-            "drive": mdb2.MASTERDB2_DRIVE_PATH,
-            "output": mdb2.MASTERDB_OUTPUT_PATH,
+            "json": _paths.MASTERDB_JSON_PATH,
+            "drive": _paths.MASTERDB2_DRIVE_PATH,
+            "output": _paths.MASTERDB_OUTPUT_PATH,
         }
-        mdb2.MASTERDB_JSON_PATH = str(tmp_path / "json")
-        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive")
-        mdb2.MASTERDB_OUTPUT_PATH = output_dir
+        _paths.MASTERDB_JSON_PATH = str(tmp_path / "json")
+        _paths.MASTERDB2_DRIVE_PATH = str(tmp_path / "drive")
+        _paths.MASTERDB_OUTPUT_PATH = output_dir
         try:
             CreateJSON("RoundTrip")
         finally:
-            mdb2.MASTERDB_JSON_PATH = saved["json"]
-            mdb2.MASTERDB2_DRIVE_PATH = saved["drive"]
-            mdb2.MASTERDB_OUTPUT_PATH = saved["output"]
+            _paths.MASTERDB_JSON_PATH = saved["json"]
+            _paths.MASTERDB2_DRIVE_PATH = saved["drive"]
+            _paths.MASTERDB_OUTPUT_PATH = saved["output"]
 
         with open(os.path.join(output_dir, "RoundTrip.json"), "r", encoding="utf-8") as f:
             result = json.load(f)
@@ -1722,12 +1723,12 @@ class TestMasterdbXlsxCellValues:
             {"IMAGE": "", "KEY ID 0": "id", "KEY VALUE 0": "test-001",
              "ID": "name", "원문": "テスト名前", "번역": "테스트이름", "설명": "메모"},
         ]
-        saved = mdb2.MASTERDB2_DRIVE_PATH
-        mdb2.MASTERDB2_DRIVE_PATH = str(tmp_path)
+        saved = _paths.MASTERDB2_DRIVE_PATH
+        _paths.MASTERDB2_DRIVE_PATH = str(tmp_path)
         try:
             WriteXlsx("CellTest", records)
         finally:
-            mdb2.MASTERDB2_DRIVE_PATH = saved
+            _paths.MASTERDB2_DRIVE_PATH = saved
 
         result = pd.read_excel(str(tmp_path / "CellTest.xlsx"), engine="openpyxl")
         assert result.iloc[0]["원문"] == "テスト名前"
