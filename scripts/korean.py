@@ -79,8 +79,9 @@ _FALSE_PARTICLE_WORDS = re.compile(
 
 # Pattern to detect particle at start of text
 # Particle must be followed by space, end of string, or non-Korean character
+# Longer alternatives must come first to prevent partial matches (에서 before 에, 만큼 before 만)
 _PARTICLE_DETECT = re.compile(
-    r'^(으로|이|가|를|을|은|는|와|과|로|에|의|도|만|까지|부터|에서|만큼)(?:\s|$|[^가-힣])'
+    r'^(으로|에서|까지|부터|만큼|이|가|를|을|은|는|와|과|로|에|의|도|만)(?:\s|$|[^가-힣])'
 )
 
 

@@ -91,6 +91,22 @@ class TestLastKoreanChar:
         assert last_korean_char("레슨 CLEAR") == "슨"
         assert last_korean_char("100파라미터") == "터"
 
+    def test_nested_html_tags(self):
+        assert last_korean_char("텍스트</b></nobr>") == "트"
+
+    def test_html_with_space(self):
+        """HTML tag preceded by space."""
+        assert last_korean_char("텍스트 </nobr>") == "트"
+
+    def test_korean_followed_by_digits(self):
+        assert last_korean_char("레벨5") == "벨"
+        assert last_korean_char("3개") == "개"
+        assert last_korean_char("1턴") == "턴"
+
+    def test_punctuation_only(self):
+        assert last_korean_char("!!!") is None
+        assert last_korean_char("100%") is None
+
     def test_empty(self):
         assert last_korean_char("") is None
         assert last_korean_char("   ") is None
@@ -180,6 +196,18 @@ class TestIsParticleStart:
         assert is_particle_start("으로 변경") == "으로"
         assert is_particle_start("에 들어간다") == "에"
 
+    def test_multi_char_particles(self):
+        """Multi-character particles: 에서, 까지, 부터, 만큼."""
+        assert is_particle_start("에서 나온") == "에서"
+        assert is_particle_start("까지 도달") == "까지"
+        assert is_particle_start("부터 시작") == "부터"
+        assert is_particle_start("만큼 증가") == "만큼"
+
+    def test_e_vs_eseo_ordering(self):
+        """에서 should be detected as 에서, not 에."""
+        assert is_particle_start("에서 찾기") == "에서"
+        assert is_particle_start("에 들어간다") == "에"
+
     def test_non_particle_starts(self):
         """Words starting with particle-like chars but aren't particles."""
         assert is_particle_start("이하일 때") is None
@@ -188,6 +216,21 @@ class TestIsParticleStart:
         assert is_particle_start("가능한") is None
         assert is_particle_start("의욕") is None
         assert is_particle_start("로그") is None
+
+    def test_particle_followed_by_korean(self):
+        """Particle-like char followed directly by Korean = not a particle."""
+        assert is_particle_start("가고") is None
+        assert is_particle_start("이동") is None
+        assert is_particle_start("은행") is None
+
+    def test_html_start(self):
+        """Text starting with HTML tag is not a particle."""
+        assert is_particle_start("<nobr>가 3") is None
+
+    def test_leading_whitespace(self):
+        """Leading whitespace stripped before detection."""
+        assert is_particle_start("  가 0") == "가"
+        assert is_particle_start("  이하") is None
 
     def test_bare_particle(self):
         """Bare particle (just the particle, no following text)."""
@@ -287,3 +330,39 @@ class TestAdjustBoundary:
     def test_dual_form_ro_euro_rieul(self):
         prev, next_text = adjust_boundary("스킬", "으로(로) 변경")
         assert next_text == "로 변경"
+
+    def test_empty_prev(self):
+        prev, next_text = adjust_boundary("", "가 3")
+        assert prev == ""
+        assert next_text == "가 3"
+
+    def test_empty_next(self):
+        prev, next_text = adjust_boundary("원기", "")
+        assert prev == "원기"
+        assert next_text == ""
+
+    def test_none_inputs(self):
+        assert adjust_boundary(None, "가 3") == (None, "가 3")
+        assert adjust_boundary("원기", None) == ("원기", None)
+
+    def test_number_only_prev(self):
+        """Number-only prev: no correction possible."""
+        prev, next_text = adjust_boundary("100", "가 3")
+        assert next_text == "가 3"
+
+    def test_html_with_space_prev(self):
+        """HTML tag and space in prev: find Korean char before HTML."""
+        prev, next_text = adjust_boundary("텍스트 </nobr>", "가 3")
+        assert next_text == "가 3"  # 트 has no batchim, 가 correct
+
+    def test_consecutive_particles(self):
+        """Prev is a particle, next starts with particle."""
+        prev, next_text = adjust_boundary("을 ", "가 3")
+        # 을 has batchim → 가 should become 이
+        assert prev == "을"
+        assert next_text == "이 3"
+
+    def test_eseo_particle_boundary(self):
+        """에서 at boundary: detected as 에서, not corrected (no allomorph)."""
+        prev, next_text = adjust_boundary("손 패", "에서 찾기")
+        assert next_text == "에서 찾기"

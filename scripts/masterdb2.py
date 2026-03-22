@@ -78,6 +78,36 @@ def _parse_array_key(key_id: str):
     return m.group(1), int(m.group(2))
 
 
+def _extract_pk_fields(record):
+    """Extract primary key field→value mapping from a record."""
+    pk_fields = {}
+    i = 0
+    while f"KEY ID {i}" in record:
+        pk_fields[record[f"KEY ID {i}"]] = record[f"KEY VALUE {i}"]
+        i += 1
+    return pk_fields
+
+
+def _find_record_by_pk_and_id(target_id, pk_fields, all_records):
+    """Find a record in all_records matching target_id and primary key fields.
+
+    Returns the record dict (mutable reference) or None.
+    """
+    for r in all_records:
+        if r.get("ID") != target_id:
+            continue
+        match = True
+        j = 0
+        while f"KEY ID {j}" in r:
+            if r.get(f"KEY VALUE {j}") != pk_fields.get(r.get(f"KEY ID {j}")):
+                match = False
+                break
+            j += 1
+        if match:
+            return r
+    return None
+
+
 def _get_prev_array_element(record, all_records, field_name, idx, json_data):
     """Get the text of the previous array element (idx-1).
 
@@ -92,40 +122,21 @@ def _get_prev_array_element(record, all_records, field_name, idx, json_data):
         return None
 
     prev_key_id = f"{field_name}[{idx - 1}].text"
+    pk_fields = _extract_pk_fields(record)
 
-    # Extract primary key values from current record for matching
-    pk_fields = {}
-    i = 0
-    while f"KEY ID {i}" in record:
-        pk_fields[record[f"KEY ID {i}"]] = record[f"KEY VALUE {i}"]
-        i += 1
-
-    # Search in all_records for matching primary key + prev ID
-    for r in all_records:
-        if r.get("ID") != prev_key_id:
-            continue
-        # Check primary key match
-        match = True
-        j = 0
-        while f"KEY ID {j}" in r:
-            if r.get(f"KEY VALUE {j}") != pk_fields.get(r.get(f"KEY ID {j}")):
-                match = False
-                break
-            j += 1
-        if match:
-            # Prefer translation, fall back to original
-            return r.get("번역") or r.get("원문", "")
+    # Search in all_records
+    prev_record = _find_record_by_pk_and_id(prev_key_id, pk_fields, all_records)
+    if prev_record is not None:
+        return prev_record.get("번역") or prev_record.get("원문", "")
 
     # Fall back to JSON data
     if json_data is not None and "data" in json_data:
         for data_entry in json_data["data"]:
-            # Check primary key match
             pk_match = all(
                 str(data_entry.get(k)) == v for k, v in pk_fields.items()
             )
             if not pk_match:
                 continue
-            # Navigate to the array field
             arr = data_entry.get(field_name)
             if isinstance(arr, list) and idx - 1 < len(arr):
                 prev_elem = arr[idx - 1]
@@ -597,27 +608,9 @@ def _find_prev_record(record, all_records, field_name, idx):
     """
     if idx <= 0:
         return None
-
     prev_key_id = f"{field_name}[{idx - 1}].text"
-    pk_fields = {}
-    i = 0
-    while f"KEY ID {i}" in record:
-        pk_fields[record[f"KEY ID {i}"]] = record[f"KEY VALUE {i}"]
-        i += 1
-
-    for r in all_records:
-        if r.get("ID") != prev_key_id:
-            continue
-        match = True
-        j = 0
-        while f"KEY ID {j}" in r:
-            if r.get(f"KEY VALUE {j}") != pk_fields.get(r.get(f"KEY ID {j}")):
-                match = False
-                break
-            j += 1
-        if match:
-            return r
-    return None
+    pk_fields = _extract_pk_fields(record)
+    return _find_record_by_pk_and_id(prev_key_id, pk_fields, all_records)
 
 
 def _apply_particle_correction(record, all_records, json_data):

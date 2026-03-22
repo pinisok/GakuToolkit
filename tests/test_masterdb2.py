@@ -954,6 +954,72 @@ class TestParseArrayKey:
         result = _parse_array_key("someOtherArray[5].text")
         assert result is None
 
+    def test_empty_string(self):
+        from scripts.masterdb2 import _parse_array_key
+        assert _parse_array_key("") is None
+
+    def test_no_dot_text(self):
+        from scripts.masterdb2 import _parse_array_key
+        assert _parse_array_key("produceDescriptions[0]") is None
+
+    def test_double_digit_index(self):
+        from scripts.masterdb2 import _parse_array_key
+        field, idx = _parse_array_key("produceDescriptions[12].text")
+        assert field == "produceDescriptions"
+        assert idx == 12
+
+    def test_all_real_patterns(self):
+        from scripts.masterdb2 import _parse_array_key
+        patterns = [
+            "customizeProduceDescriptions[0].text",
+            "playProduceDescriptions[3].text",
+            "playEffectProduceDescriptions[1].text",
+            "upgradeProduceCardProduceDescriptions[0].text",
+        ]
+        for p in patterns:
+            result = _parse_array_key(p)
+            assert result is not None, f"Failed to parse: {p}"
+
+
+class TestFindRecordByPkAndId:
+    """Test _find_record_by_pk_and_id helper."""
+
+    def test_finds_match(self):
+        from scripts.masterdb2 import _find_record_by_pk_and_id
+        records = [
+            {"ID": "name", "KEY ID 0": "id", "KEY VALUE 0": "a"},
+            {"ID": "desc", "KEY ID 0": "id", "KEY VALUE 0": "a"},
+        ]
+        result = _find_record_by_pk_and_id("desc", {"id": "a"}, records)
+        assert result is records[1]
+
+    def test_no_match(self):
+        from scripts.masterdb2 import _find_record_by_pk_and_id
+        records = [
+            {"ID": "name", "KEY ID 0": "id", "KEY VALUE 0": "a"},
+        ]
+        result = _find_record_by_pk_and_id("desc", {"id": "a"}, records)
+        assert result is None
+
+    def test_pk_mismatch(self):
+        from scripts.masterdb2 import _find_record_by_pk_and_id
+        records = [
+            {"ID": "desc", "KEY ID 0": "id", "KEY VALUE 0": "b"},
+        ]
+        result = _find_record_by_pk_and_id("desc", {"id": "a"}, records)
+        assert result is None
+
+    def test_multiple_pks(self):
+        from scripts.masterdb2 import _find_record_by_pk_and_id
+        records = [
+            {"ID": "desc", "KEY ID 0": "id", "KEY VALUE 0": "a",
+             "KEY ID 1": "type", "KEY VALUE 1": "x"},
+            {"ID": "desc", "KEY ID 0": "id", "KEY VALUE 0": "a",
+             "KEY ID 1": "type", "KEY VALUE 1": "y"},
+        ]
+        result = _find_record_by_pk_and_id("desc", {"id": "a", "type": "y"}, records)
+        assert result is records[1]
+
 
 class TestGetPrevArrayElement:
     """Test _get_prev_array_element helper."""
@@ -998,6 +1064,53 @@ class TestGetPrevArrayElement:
         )
         assert result == "percent"
 
+    def test_index_gap_returns_none(self):
+        """When prev index doesn't exist in records or JSON, returns None."""
+        from scripts.masterdb2 import _get_prev_array_element
+        records = [
+            {"ID": "produceDescriptions[1].text", "원문": "A", "번역": "A번역",
+             "KEY ID 0": "id", "KEY VALUE 0": "card-001"},
+            # [2] doesn't exist
+            {"ID": "produceDescriptions[3].text", "원문": "B", "번역": "B번역",
+             "KEY ID 0": "id", "KEY VALUE 0": "card-001"},
+        ]
+        # Looking for prev of [3] → wants [2] → not in records, no JSON
+        result = _get_prev_array_element(
+            records[1], records, "produceDescriptions", 3, None
+        )
+        assert result is None
+
+    def test_json_out_of_bounds(self):
+        """JSON fallback when idx-1 is out of array bounds."""
+        from scripts.masterdb2 import _get_prev_array_element
+        records = [
+            {"ID": "produceDescriptions[5].text", "원문": "test", "번역": "테스트",
+             "KEY ID 0": "id", "KEY VALUE 0": "card-001"},
+        ]
+        json_data = {
+            "data": [
+                {"id": "card-001", "produceDescriptions": [{"text": "only one"}]}
+            ]
+        }
+        result = _get_prev_array_element(
+            records[0], records, "produceDescriptions", 5, json_data
+        )
+        assert result is None
+
+    def test_pk_isolation(self):
+        """Different primary keys should not cross-contaminate."""
+        from scripts.masterdb2 import _get_prev_array_element
+        records = [
+            {"ID": "produceDescriptions[2].text", "원문": "WRONG", "번역": "WRONG",
+             "KEY ID 0": "id", "KEY VALUE 0": "card-OTHER"},
+            {"ID": "produceDescriptions[3].text", "원문": "test", "번역": "테스트",
+             "KEY ID 0": "id", "KEY VALUE 0": "card-001"},
+        ]
+        result = _get_prev_array_element(
+            records[1], records, "produceDescriptions", 3, None
+        )
+        assert result is None  # card-OTHER doesn't match card-001
+
     def test_prev_index_zero(self):
         """Index 0 has no previous element."""
         from scripts.masterdb2 import _get_prev_array_element
@@ -1009,6 +1122,72 @@ class TestGetPrevArrayElement:
             records[0], records, "produceDescriptions", 0, None
         )
         assert result is None
+
+
+class TestApplyParticleCorrection:
+    """Direct unit tests for _apply_particle_correction."""
+
+    def test_corrects_particle(self):
+        from scripts.masterdb2 import _apply_particle_correction
+        records = [
+            {"ID": "produceDescriptions[1].text", "원문": "集中", "번역": "집중",
+             "KEY ID 0": "id", "KEY VALUE 0": "c1"},
+            {"ID": "produceDescriptions[2].text", "원문": "が0", "번역": "가 0",
+             "KEY ID 0": "id", "KEY VALUE 0": "c1"},
+        ]
+        result = _apply_particle_correction(records[1], records, None)
+        assert result is True
+        # 집중 has batchim → 가 should become 이
+        assert records[1]["번역"] == "이 0"
+
+    def test_no_correction_for_non_array(self):
+        from scripts.masterdb2 import _apply_particle_correction
+        record = {"ID": "name", "원문": "test", "번역": "가 테스트",
+                  "KEY ID 0": "id", "KEY VALUE 0": "c1"}
+        result = _apply_particle_correction(record, [record], None)
+        assert result is False
+        assert record["번역"] == "가 테스트"
+
+    def test_no_correction_empty_translation(self):
+        from scripts.masterdb2 import _apply_particle_correction
+        record = {"ID": "produceDescriptions[1].text", "원문": "test", "번역": "",
+                  "KEY ID 0": "id", "KEY VALUE 0": "c1"}
+        result = _apply_particle_correction(record, [record], None)
+        assert result is False
+
+    def test_no_correction_no_prev(self):
+        from scripts.masterdb2 import _apply_particle_correction
+        record = {"ID": "produceDescriptions[0].text", "원문": "test", "번역": "가 0",
+                  "KEY ID 0": "id", "KEY VALUE 0": "c1"}
+        result = _apply_particle_correction(record, [record], None)
+        assert result is False
+
+    def test_strips_prev_trailing_space(self):
+        from scripts.masterdb2 import _apply_particle_correction
+        records = [
+            {"ID": "produceDescriptions[1].text", "원문": "集中", "번역": "집중 ",
+             "KEY ID 0": "id", "KEY VALUE 0": "c1"},
+            {"ID": "produceDescriptions[2].text", "원문": "が0", "번역": "가 0",
+             "KEY ID 0": "id", "KEY VALUE 0": "c1"},
+        ]
+        _apply_particle_correction(records[1], records, None)
+        # Prev record's trailing space should be stripped
+        assert records[0]["번역"] == "집중"
+        # Particle corrected
+        assert records[1]["번역"] == "이 0"
+
+    def test_no_correction_when_particle_correct(self):
+        from scripts.masterdb2 import _apply_particle_correction
+        records = [
+            {"ID": "produceDescriptions[1].text", "원문": "原木", "번역": "원기",
+             "KEY ID 0": "id", "KEY VALUE 0": "c1"},
+            {"ID": "produceDescriptions[2].text", "원문": "が0", "번역": "가 0",
+             "KEY ID 0": "id", "KEY VALUE 0": "c1"},
+        ]
+        result = _apply_particle_correction(records[1], records, None)
+        # 원기 ends in 기 (no batchim), 가 is already correct
+        assert result is False
+        assert records[1]["번역"] == "가 0"
 
 
 class TestUpdateXlsxParticleCorrection:
