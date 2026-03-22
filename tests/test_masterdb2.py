@@ -4,6 +4,7 @@ import os
 import json
 
 import pytest
+import yaml
 import pandas as pd
 
 from tests.fixtures.create_fixtures import create_masterdb_xlsx, create_masterdb_json
@@ -1557,6 +1558,161 @@ class TestUpdateXlsxParticleCorrection:
         assert len(desc2) == 1
         # 집중 ends with consonant (중), so 가 → 이
         assert desc2[0]["번역"] == "이 0일 때, 사용 가능"
+
+
+class TestPreprocessYamlContent:
+    """Test preprocess_yaml_content: pure YAML preprocessing logic."""
+
+    def test_tab_value_wrapped_in_quotes(self):
+        from scripts.masterdb2_io import preprocess_yaml_content
+        content = "key: \tsome value"
+        result = preprocess_yaml_content(content)
+        assert result == 'key: "\tsome value"'
+
+    def test_multiple_tab_lines(self):
+        from scripts.masterdb2_io import preprocess_yaml_content
+        content = "a: \tfirst\nb: normal\nc: \tsecond"
+        result = preprocess_yaml_content(content)
+        assert 'a: "\tfirst"' in result
+        assert "b: normal" in result
+        assert 'c: "\tsecond"' in result
+
+    def test_literal_string_chomping_fix(self):
+        from scripts.masterdb2_io import preprocess_yaml_content
+        content = "description: |\n  line1\n  line2"
+        result = preprocess_yaml_content(content)
+        assert "description: |+\n" in result
+
+    def test_no_changes_needed(self):
+        from scripts.masterdb2_io import preprocess_yaml_content
+        content = "simple: value\nother: 123"
+        result = preprocess_yaml_content(content)
+        assert result == content
+
+    def test_empty_string(self):
+        from scripts.masterdb2_io import preprocess_yaml_content
+        assert preprocess_yaml_content("") == ""
+
+    def test_both_transformations(self):
+        from scripts.masterdb2_io import preprocess_yaml_content
+        content = "field: \ttabbed\nblock: |\n  text"
+        result = preprocess_yaml_content(content)
+        assert 'field: "\ttabbed"' in result
+        assert "block: |+\n" in result
+
+
+class TestConvertSingleYaml:
+    """Test _convert_single_yaml with mock loader and save function."""
+
+    def test_successful_conversion(self, tmp_path):
+        from scripts.masterdb2_io import _convert_single_yaml
+        # Create a simple YAML file
+        yaml_path = str(tmp_path / "Test.yaml")
+        with open(yaml_path, "w") as f:
+            f.write("key: value\n")
+
+        saved_data = {}
+        def mock_save(data, name):
+            saved_data[name] = data
+
+        result = _convert_single_yaml(yaml_path, "Test.yaml", yaml.SafeLoader, mock_save)
+        assert result is True
+        assert saved_data["Test"]["key"] == "value"
+
+    def test_preprocessing_applied(self, tmp_path):
+        from scripts.masterdb2_io import _convert_single_yaml
+        # YAML with literal block that needs |+ fix
+        yaml_path = str(tmp_path / "Block.yaml")
+        with open(yaml_path, "w") as f:
+            f.write("desc: |+\n  line1\n  line2\n")
+
+        saved_data = {}
+        def mock_save(data, name):
+            saved_data[name] = data
+
+        result = _convert_single_yaml(yaml_path, "Block.yaml", yaml.SafeLoader, mock_save)
+        assert result is True
+        assert "line1" in saved_data["Block"]["desc"]
+
+    def test_file_not_found_returns_false(self, tmp_path):
+        from scripts.masterdb2_io import _convert_single_yaml
+        result = _convert_single_yaml(
+            str(tmp_path / "nonexistent.yaml"), "nonexistent.yaml",
+            yaml.SafeLoader, lambda d, n: None
+        )
+        assert result is False
+
+    def test_invalid_yaml_returns_false(self, tmp_path):
+        from scripts.masterdb2_io import _convert_single_yaml
+        yaml_path = str(tmp_path / "Bad.yaml")
+        with open(yaml_path, "w") as f:
+            f.write("invalid: yaml: content: [[[")
+
+        result = _convert_single_yaml(
+            yaml_path, "Bad.yaml", yaml.SafeLoader, lambda d, n: None
+        )
+        assert result is False
+
+    def test_save_error_returns_false(self, tmp_path):
+        from scripts.masterdb2_io import _convert_single_yaml
+        yaml_path = str(tmp_path / "Good.yaml")
+        with open(yaml_path, "w") as f:
+            f.write("key: value\n")
+
+        def failing_save(data, name):
+            raise RuntimeError("save failed")
+
+        result = _convert_single_yaml(
+            yaml_path, "Good.yaml", yaml.SafeLoader, failing_save
+        )
+        assert result is False
+
+
+class TestFilterFileList:
+    """Test _filter_file_list: pure file list filtering logic."""
+
+    def test_filter_by_exception_list(self):
+        from scripts.masterdb2_io import _filter_file_list
+        files = [
+            ("/a/Achievement.yaml", "Achievement.yaml", "Achievement.yaml"),
+            ("/a/Badge.yaml", "Badge.yaml", "Badge.yaml"),
+            ("/a/Card.yaml", "Card.yaml", "Card.yaml"),
+        ]
+        result = _filter_file_list(files, ["Achievement", "Card"])
+        assert len(result) == 2
+        assert result[0][2] == "Achievement.yaml"
+        assert result[1][2] == "Card.yaml"
+
+    def test_none_exception_list_returns_all(self):
+        from scripts.masterdb2_io import _filter_file_list
+        files = [
+            ("/a/A.yaml", "A.yaml", "A.yaml"),
+            ("/a/B.yaml", "B.yaml", "B.yaml"),
+        ]
+        result = _filter_file_list(files, None)
+        assert len(result) == 2
+
+    def test_empty_exception_list_returns_all(self):
+        from scripts.masterdb2_io import _filter_file_list
+        files = [("/a/A.yaml", "A.yaml", "A.yaml")]
+        result = _filter_file_list(files, [])
+        assert len(result) == 1
+
+    def test_no_matches_returns_empty(self):
+        from scripts.masterdb2_io import _filter_file_list
+        files = [("/a/A.yaml", "A.yaml", "A.yaml")]
+        result = _filter_file_list(files, ["B"])
+        assert len(result) == 0
+
+    def test_does_not_mutate_input(self):
+        from scripts.masterdb2_io import _filter_file_list
+        files = [
+            ("/a/A.yaml", "A.yaml", "A.yaml"),
+            ("/a/B.yaml", "B.yaml", "B.yaml"),
+        ]
+        original_len = len(files)
+        _filter_file_list(files, ["A"])
+        assert len(files) == original_len
 
 
 class TestLoadOldKV:

@@ -105,21 +105,70 @@ def LoadOldKV(file_name: str) -> dict:
 
 # YAML conversion
 
+
+def preprocess_yaml_content(content: str) -> str:
+    """Preprocess YAML content before parsing.
+
+    1. Wrap tab-prefixed values in quotes: `: \\tval` → `: "\\tval"`
+    2. Fix literal string newline chomping: `|\\n` → `|+\\n`
+
+    Pure function — no I/O.
+    """
+    content = re.sub(r': (\t.*)', r': "\1"', content)
+    content = content.replace("|\n", "|+\n")
+    return content
+
+
+def _filter_file_list(file_list, exception_list):
+    """Filter file list to only include files in exception_list.
+
+    Args:
+        file_list: List of (abs_path, rel_path, filename) tuples.
+        exception_list: List of file names (without .yaml extension) to keep.
+            If None, returns all files unchanged.
+
+    Returns new list (does not mutate input).
+    """
+    if not exception_list:
+        return list(file_list)
+    exception_set = set(exception_list)
+    return [
+        entry for entry in file_list
+        if entry[2][:-5] in exception_set
+    ]
+
+
 _save_func = None
 _CustomLoader = None
 
 
-def convert_yaml_types(obj):
-    file_path, file = obj
+def _convert_single_yaml(file_path, file_name, loader, save_fn):
+    """Read, preprocess, parse, and save a single YAML file.
+
+    Args:
+        file_path: Absolute path to the YAML file.
+        file_name: Original filename (e.g. "Achievement.yaml").
+        loader: YAML loader class.
+        save_fn: Callable(data, name) to save parsed data.
+
+    Returns True on success, False on error.
+    """
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
-        content = re.sub(r': (\t.*)', r': "\1"', content)
-        content = content.replace("|\n", "|+\n")
-        data = yaml.load(content, _CustomLoader)
-        _save_func(data, file[:-5])
+        content = preprocess_yaml_content(content)
+        data = yaml.load(content, loader)
+        save_fn(data, file_name[:-5])
+        return True
     except Exception as e:
         print(f"加载文件 {file_path} 时出错: {e}")
+        return False
+
+
+def convert_yaml_types(obj):
+    """Multiprocessing-compatible wrapper for _convert_single_yaml."""
+    file_path, file = obj
+    _convert_single_yaml(file_path, file, _CustomLoader, _save_func)
 
 
 def convert_yaml_types_in_parallel(exception_list=None):
@@ -138,11 +187,8 @@ def convert_yaml_types_in_parallel(exception_list=None):
     folder_path = "./gakumasu-diff/orig"
     if not os.path.isdir(folder_path):
         raise FileNotFoundError(f"Folder {folder_path} is not exists")
-    file_list = Helper_GetFilesFromDir(folder_path, ".yaml")
-    for n, obj in reversed(list(enumerate(file_list))):
-        if exception_list:
-            if obj[2][:-5] not in exception_list:
-                file_list.pop(n)
+    all_files = Helper_GetFilesFromDir(folder_path, ".yaml")
+    file_list = _filter_file_list(all_files, exception_list)
     file_list_size = len(file_list)
     LOG_INFO(2, f"Converting {file_list_size} MasterDB files from yaml to json")
     pool = multiprocessing.Pool()

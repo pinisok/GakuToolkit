@@ -43,6 +43,8 @@ from .masterdb2_io import (
     LoadOldKV,
     convert_yaml_types,
     convert_yaml_types_in_parallel,
+    preprocess_yaml_content,
+    _filter_file_list,
 )
 from .masterdb2_convert import (
     PATTERN,
