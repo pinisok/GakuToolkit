@@ -7,10 +7,11 @@ TARGET_SHEET = "1gjYXr-aFrDLLXUfmsA-tN_Tc5rgovtIfeDqoJM-78jM"
 
 
 def _build_file_chip_cell(url, date_str):
-    """Build a CellData with chipRuns for a file chip + date text.
+    """Build a CellData with chipRuns for a Drive file chip + date text.
 
     Cell text: "@ (2026-03-22)"
-    chipRuns maps the @ at index 0 to a Drive file link chip.
+    chipRuns maps the @ at index 0 to a Drive file rich link chip.
+    Note: Only Google Drive file URIs can be written as chips.
     """
     cell_text = f"@ {date_str}"
     return {
@@ -19,8 +20,7 @@ def _build_file_chip_cell(url, date_str):
             {
                 "startIndex": 0,
                 "chip": {
-                    "chipType": "SMART_CHIP",
-                    "link": {"uri": url},
+                    "richLinkProperties": {"uri": url},
                 },
             }
         ],
