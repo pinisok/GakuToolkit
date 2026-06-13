@@ -6,12 +6,12 @@ Submodules:
 - adv_merge: merge/diff/conversion logic
 """
 
-import os, fnmatch
+import os, fnmatch, json
 from io import StringIO
+from pathlib import Path
 
 from .helper import (
-    Helper_GetFilesFromDir, Helper_GetFilesFromDirByDate,
-    load_cache_date, save_cache_date,
+    Helper_GetFilesFromDir,
 )
 from .log import LOG_DEBUG, LOG_INFO, LOG_ERROR, logger
 
@@ -34,8 +34,10 @@ from .adv_merge import (
 )
 from .paths import (
     GIT_ADV_PATH, ADV_ORIGINAL_PATH, ADV_REMOTE_PATH, ADV_DRIVE_PATH,
-    ADV_TEMP_PATH, ADV_OUTPUT_PATH, ADV_CACHE_FILE,
+    ADV_TEMP_PATH, ADV_OUTPUT_PATH,
 )
+
+ADV_MANIFEST_DIFF = Path("res/.manifest/adv.diff.json")
 
 
 # ============================================================
@@ -192,21 +194,32 @@ def _convert_xlsx_to_txt_batch(drive_file_paths):
 
 
 def UpdateOriginalToDrive():
-    """Update: Campus-Adv-txts → Google Drive XLSX."""
-    last_update_date = load_cache_date(ADV_CACHE_FILE)
-    if last_update_date:
-        LOG_DEBUG(2, f"Load update date {last_update_date}")
-    save_cache_date(ADV_CACHE_FILE)
+    """Update: Campus-Adv-txts → Google Drive XLSX.
 
-    if last_update_date is not None:
-        LOG_DEBUG(2, "Check git diff")
-        original_file_paths = Helper_GetFilesFromDirByDate(
-            last_update_date, GIT_ADV_PATH, ".txt", "adv_"
-        )
-    else:
-        original_file_paths = []
-    if len(original_file_paths) <= 0:
-        LOG_INFO(2, "ADV is not updated, skip")
+    Uses campus_sync manifest diff (sha256-based) to detect only files whose
+    content actually changed, preventing false positives from mtime changes
+    caused by campus regenerating all files on every sync.
+    """
+    if not ADV_MANIFEST_DIFF.exists():
+        LOG_INFO(2, "ADV manifest diff not found, skip")
+        return [], {}
+
+    diff = json.loads(ADV_MANIFEST_DIFF.read_text())
+    changed_names = set(diff.get("added", []) + [m["path"] for m in diff.get("modified", [])])
+
+    if not changed_names:
+        LOG_INFO(2, "ADV is not updated (no campus diff), skip")
+        return [], {}
+
+    LOG_INFO(2, f"ADV campus diff: +{diff['summary']['+']} ~{diff['summary']['~']} -{diff['summary']['-']}")
+
+    original_file_paths = [
+        entry for entry in Helper_GetFilesFromDir(GIT_ADV_PATH, ".txt", "adv_")
+        if entry[2] in changed_names
+    ]
+
+    if not original_file_paths:
+        LOG_INFO(2, "ADV changed files not found in source dir, skip")
         return [], {}
 
     file_list = _filter_adv_files(original_file_paths)

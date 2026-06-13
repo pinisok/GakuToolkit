@@ -6,6 +6,8 @@ compatibility, and contains the folder-level pipeline functions.
 
 import os
 import sys
+import json
+from pathlib import Path
 
 from .helper import *
 from .log import *
@@ -13,10 +15,11 @@ from .paths import (
     MASTERDB_ORIGINAL_PATH, MASTERDB_JSON_PATH, MASTERDB_ORIGINAL_DATA_PATH,
     MASTERDB_REMOTE_PATH, MASTERDB_DRIVE_PATH,
     MASTERDB2_REMOTE_PATH, MASTERDB2_DRIVE_PATH,
-    MASTERDB_TEMP_PATH, MASTERDB_OUTPUT_PATH, MASTERDB_CACHE_FILE,
+    MASTERDB_TEMP_PATH, MASTERDB_OUTPUT_PATH,
     GIT_MASTERDB_PATH,
 )
-from .helper import load_cache_date, save_cache_date
+
+MASTERDB_MANIFEST_DIFF = Path("res/.manifest/masterdb.diff.json")
 
 # Re-export all public symbols for backward compatibility
 from .masterdb2_db import db_session, DB_save, DB_get
@@ -134,18 +137,31 @@ def _convert_masterdb_batch(todo_list):
 # 업데이트 반영
 # gakumas-diff > Google Drive
 def UpdateOriginalToDrive():
-    last_update_date = load_cache_date(MASTERDB_CACHE_FILE)
-    if last_update_date:
-        LOG_DEBUG(2, f"Load update date {last_update_date}")
-    save_cache_date(MASTERDB_CACHE_FILE)
+    """Update: Campus-MasterDB-yamls → Google Drive XLSX.
 
-    if last_update_date is not None:
-        LOG_DEBUG(2, "Check git diff")
-        original_file_paths = Helper_GetFilesFromDirByDate(last_update_date, MASTERDB_ORIGINAL_PATH, ".yaml")
-    else:
-        original_file_paths = []
-    if len(original_file_paths) <= 0:
-        LOG_INFO(2, "MasterDB is not updated, skip")
+    Uses campus_sync manifest diff (sha256-based) to detect only files whose
+    content actually changed, preventing false positives from mtime changes.
+    """
+    if not MASTERDB_MANIFEST_DIFF.exists():
+        LOG_INFO(2, "MasterDB manifest diff not found, skip")
+        return [], {}
+
+    diff = json.loads(MASTERDB_MANIFEST_DIFF.read_text())
+    changed_names = set(diff.get("added", []) + [m["path"] for m in diff.get("modified", [])])
+
+    if not changed_names:
+        LOG_INFO(2, "MasterDB is not updated (no campus diff), skip")
+        return [], {}
+
+    LOG_INFO(2, f"MasterDB campus diff: +{diff['summary']['+']} ~{diff['summary']['~']} -{diff['summary']['-']}")
+
+    original_file_paths = [
+        entry for entry in Helper_GetFilesFromDir(MASTERDB_ORIGINAL_PATH, ".yaml")
+        if entry[2] in changed_names
+    ]
+
+    if not original_file_paths:
+        LOG_INFO(2, "MasterDB changed files not found in source dir, skip")
         return [], {}
 
     file_list = _filter_masterdb_files(original_file_paths)
