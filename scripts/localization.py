@@ -17,25 +17,80 @@ Converter
 """
 
 def XlsxToJson(input_path, output_path):
-    input_dataframe = pd.read_excel(input_path, na_values="", keep_default_na=False, na_filter=False, engine="openpyxl")
-    input_dataframe = input_dataframe.convert_dtypes()
-    input_dataframe.fillna("", inplace=True)
-    input_records = input_dataframe.to_dict(orient="records")
-    data = {}
-    for input_record in input_records:
-        input_record_keys = input_record.keys()
-        if not 0 in input_record_keys or not type(input_record[0]) == str:
-            continue
-        if not "ID" in input_record_keys or not type(input_record['ID']) == str:
-            continue
-        if not "번역" in input_record_keys or not type(input_record['번역']) == str:
-            LOG_DEBUG(3, f"{input_record['ID']}({input_record[0]})의 번역 값이 존재하지 않습니다. 넘어갑니다.")
-            continue
-        # 수정해야되는 내용 수정
-        if input_record["번역"].startswith("'"):
-            data[input_record["ID"]] = Deserialize(input_record["번역"][1:])
-        else:
-            data[input_record["ID"]] = Deserialize(input_record["번역"])
+    """Convert localization xlsx → id→korean JSON.
+
+    Read columns directly via openpyxl by header NAME rather than positional
+    integer keys. The original pandas-based implementation gated on
+    `0 in input_record_keys` which fails the moment the first column header
+    becomes anything other than a plain int — which is exactly what happens
+    when apply_diff_to_xlsx (release sync) writes through openpyxl and the
+    JP source column ends up rendered as `Unnamed: 0` by pandas. Every row
+    silently dropped → empty JSON published.
+
+    The current row shape produced by the release pipeline:
+        col A  — JP source (header was '0' or an array formula; we match by
+                 position-after-known-headers, not by name)
+        col B  — '번역'  (Korean translation; export target)
+        col C  — 'ID'    (lookup key)
+        col D+ — unused
+
+    Rows are skipped when:
+      - ID cell isn't a non-empty string
+      - 번역 cell is empty
+      - 번역 carries the OBSOLETE marker via JP column (entry retired)
+    """
+    import openpyxl
+    from .localization_release import OBSOLETE_MARKER
+
+    wb = openpyxl.load_workbook(input_path, read_only=True, data_only=True)
+    try:
+        ws = wb.active
+        headers = [c.value for c in ws[1]]
+        try:
+            id_col = headers.index("ID")
+            kr_col = headers.index("번역")
+        except ValueError:
+            LOG_ERROR(3, f"localization xlsx missing required headers (got: {headers})")
+            raise
+
+        # JP source column: anything that's not ID/번역 and lives at the
+        # head of the sheet. Matches both legacy int(0) header and the
+        # newer formula/Unnamed: 0 cases.
+        jp_col = next(
+            (i for i, h in enumerate(headers)
+             if i != id_col and i != kr_col
+             and (h == 0 or h == "0" or h is None or i == 0)),
+            0,
+        )
+
+        data = {}
+        skipped_no_id = skipped_no_trans = skipped_obsolete = 0
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if id_col >= len(row) or kr_col >= len(row):
+                continue
+            key = row[id_col]
+            if not isinstance(key, str) or not key:
+                skipped_no_id += 1
+                continue
+            trans = row[kr_col]
+            if not isinstance(trans, str) or not trans:
+                skipped_no_trans += 1
+                continue
+            jp_val = row[jp_col] if jp_col < len(row) else ""
+            if isinstance(jp_val, str) and jp_val.startswith(OBSOLETE_MARKER):
+                skipped_obsolete += 1
+                continue
+            if trans.startswith("'"):
+                data[key] = Deserialize(trans[1:])
+            else:
+                data[key] = Deserialize(trans)
+    finally:
+        wb.close()
+
+    LOG_INFO(3, f"localization → JSON: wrote {len(data)} keys "
+                f"(skipped: no-id={skipped_no_id}, no-trans={skipped_no_trans}, "
+                f"obsolete={skipped_obsolete})")
+
     os.makedirs(os.path.split(output_path)[0], exist_ok=True)
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, allow_nan=False, indent=4)
@@ -68,13 +123,28 @@ def UpdateOriginalToDrive(bFullUpdate=False):
         LOG_WARN(2, "Localization release fetch failed — skipping update")
         return [], {}
 
-    last_tag = localization_release.load_last_release_tag()
-    if not bFullUpdate and last_tag == release.tag:
-        LOG_INFO(2, f"Localization release {release.tag} already processed — skip")
+    cache = localization_release.load_release_cache()
+    cached_tag = cache.get("tag")
+    cached_sha = cache.get("asset_sha256")
+
+    # Skip ONLY when both tag and asset sha match. A re-published release
+    # with the same tag but different content (the common case for upstream
+    # patch-ship hotfixes) flips the digest and triggers re-processing —
+    # the previous tag-only check missed those.
+    if not bFullUpdate \
+            and cached_tag == release.tag \
+            and cached_sha and release.asset_sha256 \
+            and cached_sha == release.asset_sha256:
+        LOG_INFO(2, f"Localization release {release.tag} already processed "
+                    f"(same asset sha) — skip")
         return [], {}
 
-    LOG_INFO(2, f"Localization release {release.tag} detected "
-                f"(previous: {last_tag or 'none'})")
+    if cached_tag == release.tag and cached_sha != release.asset_sha256:
+        LOG_INFO(2, f"Localization release {release.tag} was REPUBLISHED "
+                    f"(asset sha changed) — re-processing")
+    else:
+        LOG_INFO(2, f"Localization release {release.tag} detected "
+                    f"(previous: {cached_tag or 'none'})")
 
     release_json = localization_release.download_release_json(release.asset_url)
     if release_json is None:
@@ -92,7 +162,7 @@ def UpdateOriginalToDrive(bFullUpdate=False):
     if diff.empty:
         LOG_INFO(2, f"Localization release {release.tag} has no diff vs drive xlsx — "
                     f"only the tag cache is advanced")
-        localization_release.save_release_tag(release.tag)
+        localization_release.save_release_tag(release.tag, asset_sha256=release.asset_sha256)
         return [], {}
 
     localization_release.apply_diff_to_xlsx(release_json, diff, LOCALIZATION_DRIVE_PATH)
