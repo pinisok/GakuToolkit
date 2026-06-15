@@ -1,27 +1,43 @@
-"""GitHub Webhook server for auto-triggering GakuToolkit on submodule updates.
+"""GitHub Webhook + internal trigger server for run.sh.
 
-Listens for push events from:
-  - DreamGallery/Campus-adv-txts (adv submodule)
-  - pinisok/gakumas-master-translation (masterdb submodule)
+Two trigger sources, one coalescing queue:
 
-On push to main branch, runs run.sh if not already running (lock file check).
+  POST /webhook           — GitHub push events (submodule repos)
+  POST /internal/trigger  — Bearer-authenticated trigger from agents /
+                            scripts (e.g. nanoclaw agent after Drive upload)
 
-Usage:
-  python3 webhook_server.py                    # foreground
-  nohup python3 webhook_server.py &            # background
-  pm2 start webhook_server.py --interpreter python3  # pm2
+Both write into the same in-process pending flag and return 202 immediately.
+A single background worker drains the queue: while pending, take the
+cross-process flock (`/tmp/gakutoolkit.lock`) and run `run.sh`. Multiple
+triggers during a run collapse into one extra run. The flock is shared with
+the cron-driven `run.sh`, so cron and trigger-driven runs serialize safely.
 
-Config via environment variables:
-  WEBHOOK_PORT    - port to listen on (default: 9876)
-  WEBHOOK_SECRET  - GitHub webhook secret for signature validation (optional)
+No request is ever rejected with a conflict — that was the previous design's
+silent-loss bug. The worker is allowed to wait up to TRIGGER_FLOCK_TIMEOUT
+seconds for the flock; if cron's run is long-running, the trigger queues
+and fires as soon as it releases.
+
+Config (env vars):
+  WEBHOOK_PORT             — port to listen on (default: 9876)
+  WEBHOOK_SECRET           — GitHub HMAC secret (optional, validates /webhook)
+  INTERNAL_TRIGGER_TOKEN   — Bearer token for /internal/trigger (required to
+                             enable that endpoint; if unset, returns 503)
+  TRIGGER_FLOCK_TIMEOUT    — seconds to wait for /tmp/gakutoolkit.lock
+                             (default: 1800 = 30 min)
 """
 
+from __future__ import annotations
+
+import datetime
+import fcntl
 import hashlib
 import hmac
 import logging
 import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 from flask import Flask, abort, jsonify, request
@@ -32,11 +48,13 @@ from flask import Flask, abort, jsonify, request
 
 PORT = int(os.environ.get("WEBHOOK_PORT", 9876))
 SECRET = os.environ.get("WEBHOOK_SECRET", "")
+INTERNAL_TRIGGER_TOKEN = os.environ.get("INTERNAL_TRIGGER_TOKEN", "").strip()
+TRIGGER_FLOCK_TIMEOUT = int(os.environ.get("TRIGGER_FLOCK_TIMEOUT", "1800"))
+
 WORKDIR = Path(__file__).resolve().parent
 LOCKFILE = Path("/tmp/gakutoolkit.lock")
 LOGFILE = WORKDIR / "webhook.log"
 
-# Repos that trigger a run
 WATCHED_REPOS = {
     "DreamGallery/Campus-adv-txts",
     "pinisok/gakumas-master-translation",
@@ -57,75 +75,191 @@ logging.basicConfig(
 log = logging.getLogger("webhook")
 
 # ---------------------------------------------------------------------------
-# Flask app
+# Coalescing trigger queue
 # ---------------------------------------------------------------------------
+#
+# Two layers of synchronization:
+#   * Process-local `_worker_lock` — only one drain thread runs at a time
+#     inside this Flask process. Coalesces a flood of triggers into a single
+#     extra run after the current one finishes.
+#   * Cross-process `flock` on LOCKFILE — serializes against the cron-driven
+#     run.sh. Worker waits (not non-blocking) so triggers never get dropped.
+#
+# `_pending` is the single bit of state: "there is work to do." Triggers set
+# it; the worker reads-and-clears it each iteration. If a trigger arrives
+# during a run, _pending is set again → worker loops once more.
+#
+# `_last_triggers` keeps a short tail of recent trigger reasons for the
+# /status endpoint — debugging aid only.
 
-app = Flask(__name__)
+_pending = False
+_pending_lock = threading.Lock()
+_worker_lock = threading.Lock()
+_run_state = {"in_progress": False, "last_started_at": None, "last_finished_at": None,
+              "last_exit_code": None, "last_log": None, "runs_total": 0,
+              "runs_failed": 0}
+_run_state_lock = threading.Lock()
+_last_triggers: list[dict] = []
+_LAST_TRIGGERS_MAX = 20
+
+
+def _enqueue_trigger(reason: dict) -> None:
+    """Mark work pending and ensure a drain thread is running."""
+    global _pending
+    with _pending_lock:
+        _pending = True
+    with _pending_lock:
+        _last_triggers.append({
+            "at": datetime.datetime.now().isoformat(timespec="seconds"),
+            **reason,
+        })
+        del _last_triggers[:-_LAST_TRIGGERS_MAX]
+    threading.Thread(target=_drain, daemon=True, name="trigger-drain").start()
+
+
+def _drain() -> None:
+    """Run pending work; coalesce concurrent triggers into at most one
+    additional run after the current one. Only one drain thread executes;
+    others return immediately because `_pending` is preserved and the running
+    worker will see it next iteration.
+    """
+    global _pending
+    if not _worker_lock.acquire(blocking=False):
+        return
+    try:
+        while True:
+            with _pending_lock:
+                if not _pending:
+                    return
+                _pending = False
+            _run_pipeline()
+    finally:
+        _worker_lock.release()
+
+
+def _acquire_flock_with_wait(timeout: float):
+    """Acquire LOCKFILE flock with timeout. Returns the open fd on success,
+    None on timeout. The webhook worker holds this for the entire run.sh
+    invocation, then releases — matching cron's behavior of using the same
+    `/tmp/gakutoolkit.lock` for cross-process serialization.
+
+    Implementation note: we use fcntl directly (not subprocess flock(1)) so
+    we own the fd in this process. run.sh is invoked with SKIP_FLOCK=1 so
+    its internal `flock -n` block is bypassed — it would otherwise try to
+    re-acquire the same lock and refuse with "Already running".
+    """
+    LOCKFILE.touch(exist_ok=True)
+    fd = os.open(str(LOCKFILE), os.O_RDWR)
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                os.close(fd)
+                return None
+            time.sleep(1.0)
+
+
+def _run_pipeline() -> None:
+    """Invoke run.sh under the cross-process flock. Blocks up to
+    TRIGGER_FLOCK_TIMEOUT for the cron-side runner to release."""
+    started_at = datetime.datetime.now()
+    logfile = WORKDIR / f"output_webhook_{started_at:%Y%m%d_%H%M%S}.log"
+    log.info(
+        f"_run_pipeline start — waiting for flock (timeout={TRIGGER_FLOCK_TIMEOUT}s), log={logfile.name}"
+    )
+
+    with _run_state_lock:
+        _run_state.update({
+            "in_progress": True,
+            "last_started_at": started_at.isoformat(timespec="seconds"),
+            "last_log": logfile.name,
+        })
+
+    fd = _acquire_flock_with_wait(TRIGGER_FLOCK_TIMEOUT)
+    if fd is None:
+        log.error(
+            f"_run_pipeline aborted — timed out waiting {TRIGGER_FLOCK_TIMEOUT}s for {LOCKFILE}"
+        )
+        with _run_state_lock:
+            _run_state["in_progress"] = False
+            _run_state["last_finished_at"] = datetime.datetime.now().isoformat(timespec="seconds")
+            _run_state["last_exit_code"] = -1
+            _run_state["runs_total"] += 1
+            _run_state["runs_failed"] += 1
+        return
+
+    try:
+        LOCKFILE.write_text(f"{os.getpid()}\n")
+        env = {**os.environ, "SKIP_FLOCK": "1"}
+        with open(logfile, "w") as out:
+            proc = subprocess.run(
+                ["bash", "run.sh"],
+                cwd=str(WORKDIR),
+                env=env,
+                stdout=out,
+                stderr=subprocess.STDOUT,
+            )
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+    finished_at = datetime.datetime.now()
+    duration = (finished_at - started_at).total_seconds()
+    with _run_state_lock:
+        _run_state["in_progress"] = False
+        _run_state["last_finished_at"] = finished_at.isoformat(timespec="seconds")
+        _run_state["last_exit_code"] = proc.returncode
+        _run_state["runs_total"] += 1
+        if proc.returncode != 0:
+            _run_state["runs_failed"] += 1
+
+    log.info(
+        f"_run_pipeline done — exit={proc.returncode} duration={duration:.1f}s log={logfile.name}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Auth helpers
+# ---------------------------------------------------------------------------
 
 
 def _verify_signature(payload: bytes, signature: str) -> bool:
-    """Verify GitHub webhook HMAC-SHA256 signature."""
+    """GitHub webhook HMAC-SHA256 signature. Skips when SECRET is unset."""
     if not SECRET:
-        return True  # no secret configured, skip validation
+        return True
     if not signature or not signature.startswith("sha256="):
         return False
     expected = hmac.new(SECRET.encode(), payload, hashlib.sha256).hexdigest()
     return hmac.compare_digest(f"sha256={expected}", signature)
 
 
-def _is_running() -> bool:
-    """Check if run.sh is already running via lock file + PID check."""
-    if not LOCKFILE.exists():
+def _verify_bearer(header_value: str) -> bool:
+    if not INTERNAL_TRIGGER_TOKEN:
         return False
-    # Lock file exists — check if the process is actually alive
-    try:
-        pid_or_content = LOCKFILE.read_text().strip()
-        if pid_or_content.isdigit():
-            os.kill(int(pid_or_content), 0)
-            return True
-        # Lock file exists but no valid PID — still treat as running
-        # (run.sh uses 'touch' without PID, so just check file existence)
-        return True
-    except (ProcessLookupError, ValueError):
-        # PID not running — stale lock
-        log.warning("Stale lock file found, removing")
-        LOCKFILE.unlink(missing_ok=True)
+    if not header_value or not header_value.startswith("Bearer "):
         return False
-
-
-def _trigger_run(repo: str, ref: str) -> dict:
-    """Trigger run.sh in the background."""
-    if _is_running():
-        msg = f"Skipped: already running (lock exists). Trigger: {repo}@{ref}"
-        log.info(msg)
-        return {"status": "skipped", "reason": "already_running"}
-
-    log.info(f"Triggering run.sh — repo={repo} ref={ref}")
-    logfile = WORKDIR / f"output_webhook_{__import__('datetime').datetime.now():%Y%m%d_%H%M}.log"
-
-    proc = subprocess.Popen(
-        ["bash", "run.sh"],
-        cwd=str(WORKDIR),
-        stdout=open(logfile, "w"),
-        stderr=subprocess.STDOUT,
-        start_new_session=True,  # detach from webhook process
-    )
-    log.info(f"run.sh started — PID={proc.pid}, log={logfile.name}")
-    return {"status": "triggered", "pid": proc.pid, "log": logfile.name}
+    presented = header_value[len("Bearer "):].strip()
+    return hmac.compare_digest(presented, INTERNAL_TRIGGER_TOKEN)
 
 
 # ---------------------------------------------------------------------------
-# Routes
+# Flask app
 # ---------------------------------------------------------------------------
+
+app = Flask(__name__)
 
 
 @app.route("/webhook", methods=["POST"])
-def webhook():
-    """Handle GitHub webhook push events."""
-    # Verify signature
+def github_webhook():
+    """Handle GitHub push events. Enqueues via the coalescing queue."""
     signature = request.headers.get("X-Hub-Signature-256", "")
     if not _verify_signature(request.data, signature):
-        log.warning("Invalid signature")
+        log.warning("Invalid GitHub signature")
         abort(403, "Invalid signature")
 
     event = request.headers.get("X-GitHub-Event", "")
@@ -143,34 +277,63 @@ def webhook():
 
     repo = payload.get("repository", {}).get("full_name", "")
     ref = payload.get("ref", "")
-
     log.info(f"Push event: {repo} ref={ref}")
 
-    # Only trigger on watched repos + main branch
     if repo not in WATCHED_REPOS:
-        msg = f"Ignored: repo {repo} not in watch list"
-        log.info(msg)
         return jsonify({"status": "ignored", "reason": "repo_not_watched"})
-
     if ref not in ("refs/heads/main", "refs/heads/master"):
-        msg = f"Ignored: ref {ref} is not main/master"
-        log.info(msg)
         return jsonify({"status": "ignored", "reason": "not_main_branch"})
 
-    result = _trigger_run(repo, ref)
-    return jsonify(result)
+    _enqueue_trigger({"source": "github", "repo": repo, "ref": ref})
+    return jsonify({"status": "queued", "source": "github", "repo": repo}), 202
+
+
+@app.route("/internal/trigger", methods=["POST"])
+def internal_trigger():
+    """Trigger a run.sh execution from a trusted internal caller (e.g.
+    nanoclaw agent after Drive upload). Request is always queued — never
+    rejected with a conflict — so concurrent cron runs do not cause loss.
+
+    Body (optional JSON): { "reason": "...", "pipeline": "...", "files": [...] }
+    """
+    if not INTERNAL_TRIGGER_TOKEN:
+        log.warning("Internal trigger called but INTERNAL_TRIGGER_TOKEN unset")
+        abort(503, "Internal trigger not configured")
+
+    if not _verify_bearer(request.headers.get("Authorization", "")):
+        log.warning("Internal trigger: invalid bearer")
+        abort(401, "Invalid token")
+
+    body = request.get_json(silent=True) or {}
+    reason = {
+        "source": "internal",
+        "reason": body.get("reason", ""),
+        "pipeline": body.get("pipeline", ""),
+        "files": body.get("files", []),
+        "caller": request.headers.get("X-Caller", ""),
+    }
+    log.info(f"Internal trigger queued: {reason}")
+    _enqueue_trigger(reason)
+    return jsonify({"status": "queued", **reason}), 202
 
 
 @app.route("/status", methods=["GET"])
 def status():
-    """Check if run.sh is currently running."""
-    running = _is_running()
-    return jsonify({"running": running, "lock_exists": LOCKFILE.exists()})
+    with _pending_lock:
+        pending = _pending
+        recent = list(_last_triggers)
+    with _run_state_lock:
+        run_state = dict(_run_state)
+    return jsonify({
+        "pending": pending,
+        "run_state": run_state,
+        "recent_triggers": recent[-5:],
+        "lock_exists": LOCKFILE.exists(),
+    })
 
 
 @app.route("/health", methods=["GET"])
 def health():
-    """Health check endpoint."""
     return jsonify({"status": "ok"})
 
 
@@ -182,4 +345,6 @@ if __name__ == "__main__":
     log.info(f"Starting webhook server on port {PORT}")
     log.info(f"Watching repos: {WATCHED_REPOS}")
     log.info(f"Work directory: {WORKDIR}")
+    log.info(f"Internal trigger: {'enabled' if INTERNAL_TRIGGER_TOKEN else 'DISABLED (set INTERNAL_TRIGGER_TOKEN)'}")
+    log.info(f"flock timeout: {TRIGGER_FLOCK_TIMEOUT}s")
     app.run(host="0.0.0.0", port=PORT, debug=False)

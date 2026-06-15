@@ -163,7 +163,9 @@ def _upload_localization():
     """Single-file upload of localization.xlsx — uses copy (not sync) so the
     parent dir's other files are not touched."""
     import os
-    file_list = rclone.check(LOCALIZATION_DRIVE_PATH, LOCALIZATION_REMOTE_PATH)
+    # rclone.check expects directory-like destinations; compare against the
+    # parent remote path so the single file can be tracked safely.
+    file_list = rclone.check(LOCALIZATION_DRIVE_PATH, REMOTE_PATH)
     LOG_DEBUG(2, f"localization check_result : {file_list}")
     if len(file_list) > 0:
         # copy the single file into the remote parent dir.
