@@ -45,9 +45,10 @@ fi
 python3 scripts/campus_sync.py sync masterdb --skip-campus || { echo "❌ masterdb sync 실패"; exit 1; }
 python3 scripts/campus_sync.py sync adv     --skip-campus || { echo "❌ adv sync 실패";     exit 1; }
 
-# campus diff 알림 — 변경이 있으면 NanoClaw Discord DM으로 요약 전송
-# (best-effort: Discord가 죽어도 번역 파이프라인은 계속 진행)
-node scripts/notify_campus_diff.mjs || echo "⚠ campus diff notification failed"
+# campus diff 알림은 campus-monitor nanoclaw 에이전트가 monitor-channel 에
+# 보고함. run.sh 가 별도 DM 으로 한 번 더 보내면 동일 변경에 알림이 2 회
+# 뜨므로 이 단계는 제거. 알림 채널 변경 필요시 campus-monitor 의
+# CLAUDE.local.md 만 손대면 됨.
 
 # output 서브모듈은 여전히 git (push 대상이므로 git 워크플로우 유지)
 git submodule update --init --remote -- output
@@ -96,3 +97,8 @@ elif [ -n "$(git status --porcelain)" ]; then
 else
     echo "No changes to push"
 fi
+cd ..
+
+# Discord 알림 — localization 새 release 가 RELEASE_NOTES.md 에 추가됐을 때만.
+# 이미 보고한 tag 는 cache 로 추적해 중복 안 보냄. 실패시 next tick 에서 재시도.
+./scripts/notify_localization_diff.sh || echo "⚠ localization Discord notification skipped"
