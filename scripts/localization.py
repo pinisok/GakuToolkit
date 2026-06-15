@@ -123,29 +123,41 @@ def _diff_warnings(release, diff) -> dict:
 # 번역 수정사항 반영
 # Google Drive > GakumasTranslationDataKor
 def ConvertDriveToOutput(drive_file_paths=None, bFullUpdate=False):
-    if drive_file_paths is None:
-        LOG_DEBUG(2, "No file list provided, scanning local drive")
-        if os.path.exists(LOCALIZATION_DRIVE_PATH):
-            drive_file_paths = [(LOCALIZATION_DRIVE_PATH, LOCALIZATION_FILE, os.path.basename(LOCALIZATION_DRIVE_PATH))]
-        else:
-            drive_file_paths = []
-
-    if len(drive_file_paths) <= 0:
-        LOG_INFO(2, "Localization file is not updated, skip")
-        return [],[]
-    
+    """Single-file convert. Triggers when explicit list non-empty OR when the
+    drive xlsx's mtime is newer than the output JSON (or output missing)."""
     converted_file_list = []
     error_file_list = []
-    
-    if len(drive_file_paths) > 0:
-        input_path = LOCALIZATION_DRIVE_PATH
-        output_path = LOCALIZATION_OUTPUT_PATH
-        LOG_DEBUG(2, f"Start convert from drive to output '{input_path}' to '{output_path}'")
-        try:
-            XlsxToJson(input_path, output_path)
-            converted_file_list.append(os.path.basename(LOCALIZATION_DRIVE_PATH))
-        except Exception as e:
-            LOG_ERROR(2, f"Error during Convert generic file from drive to output: {e}")
-            logger.exception(e)
-            error_file_list.append((os.path.basename(LOCALIZATION_DRIVE_PATH), e))
+
+    if not os.path.exists(LOCALIZATION_DRIVE_PATH):
+        LOG_INFO(2, "Localization drive xlsx not present locally, skip")
+        return [], []
+
+    explicit = bool(drive_file_paths)
+    stale = False
+    try:
+        if not os.path.exists(LOCALIZATION_OUTPUT_PATH):
+            stale = True
+        elif os.path.getmtime(LOCALIZATION_DRIVE_PATH) > os.path.getmtime(LOCALIZATION_OUTPUT_PATH):
+            stale = True
+    except OSError:
+        stale = True
+
+    if not explicit and not stale:
+        LOG_INFO(2, "Localization is up-to-date, skip")
+        return [], []
+
+    LOG_DEBUG(
+        2,
+        f"Localization convert — explicit={explicit} stale-by-mtime={stale}"
+    )
+    input_path = LOCALIZATION_DRIVE_PATH
+    output_path = LOCALIZATION_OUTPUT_PATH
+    LOG_DEBUG(2, f"Start convert from drive to output '{input_path}' to '{output_path}'")
+    try:
+        XlsxToJson(input_path, output_path)
+        converted_file_list.append(os.path.basename(LOCALIZATION_DRIVE_PATH))
+    except Exception as e:
+        LOG_ERROR(2, f"Error during Convert localization file from drive to output: {e}")
+        logger.exception(e)
+        error_file_list.append((os.path.basename(LOCALIZATION_DRIVE_PATH), e))
     return error_file_list, converted_file_list

@@ -69,25 +69,63 @@ def UpdateOriginalToDrive(bFullUpdate = False):
     return []
 
 
+def _generic_output_for(tpl):
+    """xlsx tuple → expected output .json path. Used by stale-detection."""
+    abs_path, _rel, _filename = tpl
+    if not abs_path.endswith(".xlsx"):
+        return None
+    rel_to_drive = os.path.relpath(abs_path, GENERIC_DRIVE_PATH)
+    return os.path.join(GENERIC_OUTPUT_PATH, rel_to_drive[:-5] + ".json")
+
+
+def _generic_scan_all_local():
+    """Walk lyrics dir + GENERIC_FILE_LIST singletons. Same coverage the
+    original 'no file list provided' branch produced."""
+    files = list(Helper_GetFilesFromDir(GENERIC_DRIVE_LYRICS_PATH, ".xlsx"))
+    for f in GENERIC_FILE_LIST:
+        abs_p = GENERIC_DRIVE_PATH + f
+        if os.path.exists(abs_p):
+            files.append((abs_p, f, os.path.basename(f)))
+    return files
+
+
 # 번역 수정사항 반영
 # Google Drive > GakumasTranslationDataKor
 def ConvertDriveToOutput(drive_file_paths=None, bFullUpdate=False):
-    if drive_file_paths is None:
-        LOG_DEBUG(2, "No file list provided, scanning local drive")
-        drive_file_paths = Helper_GetFilesFromDir(GENERIC_DRIVE_LYRICS_PATH, ".xlsx")
-        for file in GENERIC_FILE_LIST:
-            drive_file_paths += [(GENERIC_DRIVE_PATH+file, file, os.path.basename(file))]
+    """Triggers (union):
+      * Explicit `drive_file_paths` from Phase 0 (rclone diff).
+      * Local mtime scan — any xlsx whose .json output is missing or older.
+    """
+    all_local = _generic_scan_all_local()
+    stale = Helper_FilterStaleByOutput(all_local, _generic_output_for)
 
-    if len(drive_file_paths) <= 0:
-        LOG_INFO(2, "Generic is not updated, skip")
-        return [],[]
-    
+    if drive_file_paths is None:
+        LOG_DEBUG(2, "No file list provided, using local stale-mtime scan")
+        to_convert = stale
+    else:
+        seen, to_convert = set(), []
+        for tpl in list(drive_file_paths) + stale:
+            if tpl[0] in seen:
+                continue
+            seen.add(tpl[0])
+            to_convert.append(tpl)
+
+    if not to_convert:
+        LOG_INFO(2, "Generic is up-to-date, skip")
+        return [], []
+
+    LOG_INFO(
+        2,
+        f"Converting {len(to_convert)} generic files "
+        f"(explicit={len(drive_file_paths or [])}, stale-by-mtime={len(stale)})",
+    )
+
     converted_file_list = []
     error_file_list = []
-    for abs_path, _, filename in drive_file_paths: # Ignore related path because it combined with generic and lyrics
+    for abs_path, _, filename in to_convert:  # rel_path is mixed (generic + lyrics) so we use abs_path
         input_path = abs_path
         rel_path = os.path.relpath(abs_path, GENERIC_DRIVE_PATH)
-        output_path = os.path.join(GENERIC_OUTPUT_PATH, rel_path[:-5]+".json")
+        output_path = os.path.join(GENERIC_OUTPUT_PATH, rel_path[:-5] + ".json")
         LOG_DEBUG(2, f"Start convert from drive to output '{input_path}' to '{output_path}'")
         try:
             XlsxToJson(input_path, output_path)

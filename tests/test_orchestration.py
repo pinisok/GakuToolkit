@@ -102,9 +102,33 @@ class TestConvertOrchestration:
             with open(version_path, "r") as f:
                 assert f.read() == old_content
 
-    def test_empty_changed_files_means_no_conversion(self):
-        """Passing empty lists in changed_files should skip all pipelines."""
+    def test_empty_changed_files_means_no_conversion(self, tmp_path, monkeypatch):
+        """Empty explicit lists + no stale local outputs → skip every pipeline.
+
+        Note: C2 added an mtime-based fallback so that xlsx mutations from
+        Phase 2 / agents are caught even when Phase 0 reports no diff. To
+        exercise the pure "nothing to do" path we isolate every pipeline's
+        drive root to an empty tmp dir before calling Convert.
+        """
         import main as m
+        from scripts import adv, masterdb2, generic, localization
+
+        for name, attr in [
+            ("adv-empty", "ADV_DRIVE_PATH"),
+            ("masterdb-empty", "MASTERDB2_DRIVE_PATH"),
+        ]:
+            d = tmp_path / name
+            d.mkdir()
+            monkeypatch.setattr(adv if attr == "ADV_DRIVE_PATH" else masterdb2, attr, str(d))
+
+        lyr = tmp_path / "lyrics-empty"
+        lyr.mkdir()
+        gen = tmp_path / "generic-empty"
+        gen.mkdir()
+        monkeypatch.setattr(generic, "GENERIC_DRIVE_LYRICS_PATH", str(lyr))
+        monkeypatch.setattr(generic, "GENERIC_DRIVE_PATH", str(gen))
+        monkeypatch.setattr(localization, "LOCALIZATION_DRIVE_PATH",
+                            str(tmp_path / "absent-localization.xlsx"))
 
         result = m.Convert(
             ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True,

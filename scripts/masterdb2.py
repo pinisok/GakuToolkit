@@ -172,16 +172,43 @@ def UpdateOriginalToDrive():
     return file_list, all_warnings
 
 
+def _masterdb_output_for(tpl):
+    """xlsx tuple → expected output .json path. Used by stale-detection."""
+    _abs, _rel, filename = tpl
+    if not filename.endswith(".xlsx"):
+        return None
+    return os.path.join(MASTERDB_OUTPUT_PATH, filename[:-5] + ".json")
+
+
 # Google Drive > GakumasTranslationDataKor
 def ConvertDriveToOutput(drive_file_paths=None, bFullUpdate=False):
+    """Convert: Google Drive XLSX → MasterDB JSON output.
+
+    Triggers (union):
+      * Explicit `drive_file_paths` from Phase 0 (rclone diff).
+      * Local mtime scan — any xlsx whose .json output is missing or older.
+    The mtime fallback catches xlsx mutations from Phase 2 / agent direct
+    edits / external scripts that Phase 0's diff would miss.
+    """
+    all_local = Helper_GetFilesFromDir(MASTERDB2_DRIVE_PATH, ".xlsx")
+    stale = Helper_FilterStaleByOutput(all_local, _masterdb_output_for)
+
     if drive_file_paths is None:
-        LOG_DEBUG(2, "No file list provided, scanning local drive")
-        drive_file_paths = Helper_GetFilesFromDir(MASTERDB2_DRIVE_PATH, ".xlsx")
-    if len(drive_file_paths) <= 0:
-        LOG_INFO(2, "MasterDB is not updated, skip")
+        LOG_DEBUG(2, "No file list provided, using local stale-mtime scan")
+        to_convert = stale
+    else:
+        seen, to_convert = set(), []
+        for tpl in list(drive_file_paths) + stale:
+            if tpl[0] in seen:
+                continue
+            seen.add(tpl[0])
+            to_convert.append(tpl)
+
+    if not to_convert:
+        LOG_INFO(2, "MasterDB is up-to-date, skip")
         return [], []
 
-    todo_list = [filename[:-5] for _, _, filename in drive_file_paths]
+    todo_list = [filename[:-5] for _, _, filename in to_convert]
 
     ORIGIN_CWD = os.getcwd()
     try:
@@ -189,5 +216,9 @@ def ConvertDriveToOutput(drive_file_paths=None, bFullUpdate=False):
     finally:
         os.chdir(ORIGIN_CWD)
 
-    LOG_INFO(2, f"Converting {len(drive_file_paths)} MasterDB files")
+    LOG_INFO(
+        2,
+        f"Converting {len(to_convert)} MasterDB files "
+        f"(explicit={len(drive_file_paths or [])}, stale-by-mtime={len(stale)})",
+    )
     return _convert_masterdb_batch(todo_list)

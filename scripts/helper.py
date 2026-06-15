@@ -97,7 +97,47 @@ def Helper_GetFilesFromDir(path:str, suffix:str = None, prefix:str = None) -> li
             file_path = os.path.join(root_path, file)
             relate_path = os.path.relpath(file_path, os.getcwd())
             finds.append((file_path, relate_path, file))
-    return finds   
+    return finds
+
+
+def Helper_FilterStaleByOutput(drive_files, output_for):
+    """Return subset of `drive_files` whose corresponding output file is
+    missing or older than the source. `output_for` is a callable taking one
+    (abs_path, rel_path, filename) tuple and returning the absolute output
+    path. Returning None or empty skips the entry (treated as up-to-date).
+
+    Why this exists: Phase 1 (Convert) previously triggered only on Phase 0's
+    download-time diff. That misses xlsx changes made between runs by any
+    other path — Phase 2's UpdateOriginalToDrive mutations, agent uploads
+    that landed locally before being pushed to Drive, external edits. The
+    mtime gate gives Phase 1 an idempotent source of truth: convert any
+    xlsx whose JSON is stale, regardless of who wrote the xlsx.
+    """
+    stale = []
+    for tpl in drive_files:
+        abs_path = tpl[0]
+        try:
+            out = output_for(tpl)
+        except Exception:
+            stale.append(tpl)
+            continue
+        if not out:
+            continue
+        try:
+            src_mtime = os.path.getmtime(abs_path)
+        except OSError:
+            continue
+        if not os.path.exists(out):
+            stale.append(tpl)
+            continue
+        try:
+            out_mtime = os.path.getmtime(out)
+        except OSError:
+            stale.append(tpl)
+            continue
+        if src_mtime > out_mtime:
+            stale.append(tpl)
+    return stale
 
 
 """
