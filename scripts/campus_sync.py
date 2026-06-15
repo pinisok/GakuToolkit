@@ -35,6 +35,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -226,6 +227,97 @@ def sync_files(source_dir: Path, pattern: str, target_dir: Path, removed: List[s
 
 
 # ---------------------------------------------------------------------------
+# Post-sync sanitizers
+# ---------------------------------------------------------------------------
+#
+# Campus uses github.com/goccy/go-yaml (currently v1.15.11; latest v1.19.2 has
+# the same bug) to serialize protobuf master DB. When a string contains a
+# carriage return (\r) — typically a data-entry artifact in the source — goccy
+# emits invalid YAML:
+#
+#   input string:  "インターバル終了確認\r"
+#   goccy output:  description: |  インターバル終了確認     ← invalid: '|' literal
+#                                                              block indicator
+#                                                              with inline content
+#
+# PyYAML correctly refuses to parse this, so downstream masterdb2 conversion
+# fails 100% of the time for any file that references Localization (and
+# Localization.yaml itself never converts to .json). The user picked option B:
+# sanitize at the sync layer rather than touching campus.
+#
+# The rewrite collapses the literal-block-inline form back into a plain
+# double-quoted scalar containing what goccy intended. We keep the visible
+# content as-is (the spaces goccy inserts mid-string come from internal \r
+# bytes; the round-trip slightly degrades but PyYAML now reads cleanly).
+_GOCCY_BROKEN_BLOCK = re.compile(
+    r"^(?P<indent>\s*)(?P<key>[A-Za-z0-9_.\-]+):\s\|-?\s+(?P<content>\S.*)$"
+)
+
+
+def _yaml_double_quote(s: str) -> str:
+    """Minimal YAML double-quoted escape for sanitized content."""
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _sanitize_goccy_yaml(path: Path) -> int:
+    """Rewrite any line of `path` whose value is a malformed literal-block-with-
+    inline-content (the goccy/go-yaml \\r bug). Returns the number of lines
+    rewritten.
+
+    Critical: we split only on LF, not on CR-or-CRLF (which Python's
+    `splitlines` does). The whole point of the bug is that goccy embeds a
+    bare `\\r` between the `|` block indicator and the inline content; if
+    we split on `\\r`, the broken line splits in half before we ever match
+    it. Reading the raw bytes and splitting on `\\n` keeps the offending
+    line intact so the regex can see `description: |\\r  content`.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError as e:
+        print(f"[sanitize] {path.name}: cannot read ({e})", file=sys.stderr)
+        return 0
+
+    text = raw.decode("utf-8", errors="replace")
+    parts = text.split("\n")
+    rewrites = 0
+    for i, line in enumerate(parts):
+        # Match the broken form: `key: |[-?]\r? +content`. The `\r` between
+        # `|` and content is what we're cleaning up.
+        m = _GOCCY_BROKEN_BLOCK.match(line)
+        if not m:
+            continue
+        indent = m.group("indent")
+        key = m.group("key")
+        content = m.group("content").rstrip("\r").rstrip()
+        parts[i] = f"{indent}{key}: {_yaml_double_quote(content)}"
+        rewrites += 1
+
+    if rewrites > 0:
+        path.write_text("\n".join(parts), encoding="utf-8")
+    return rewrites
+
+
+def sanitize_masterdb_yaml(target_dir: Path) -> None:
+    """Run goccy-bug sanitizer on every yaml under target_dir.
+    Logs total rewrites for traceability."""
+    total = 0
+    files_changed = 0
+    for p in sorted(target_dir.glob("*.yaml")):
+        n = _sanitize_goccy_yaml(p)
+        if n > 0:
+            total += n
+            files_changed += 1
+            print(f"[sanitize] {p.name}: rewrote {n} broken literal-block line(s)")
+    if total:
+        print(f"[sanitize] masterdb: fixed {total} line(s) across {files_changed} file(s)")
+
+
+POST_SYNC_HOOKS = {
+    "masterdb": sanitize_masterdb_yaml,
+}
+
+
+# ---------------------------------------------------------------------------
 # Persistence
 # ---------------------------------------------------------------------------
 
@@ -322,6 +414,16 @@ def _do_sync(target: str, spec: Dict[str, Any], source_dir: Path, pattern: str,
 
     if not used_fallback:
         sync_files(source_dir, pattern, target_dir, diff["removed"])
+
+    # Per-target post-sync normalization (e.g. fix goccy/go-yaml \\r bug for
+    # masterdb). Runs over target_dir so downstream consumers always see
+    # well-formed YAML even when campus output is mis-encoded.
+    hook = POST_SYNC_HOOKS.get(target)
+    if hook is not None:
+        try:
+            hook(target_dir)
+        except Exception as e:
+            print(f"[sanitize] {target}: hook failed ({e!r})", file=sys.stderr)
 
     _save_manifest(target, new_manifest)
     _save_diff(target, diff)
