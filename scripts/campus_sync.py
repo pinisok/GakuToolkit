@@ -428,7 +428,57 @@ def _do_sync(target: str, spec: Dict[str, Any], source_dir: Path, pattern: str,
     _save_manifest(target, new_manifest)
     _save_diff(target, diff)
     _append_journal(target, diff, campus_exit, used_fallback)
+
+    # Wake the webhook-side pipeline immediately when campus actually shipped
+    # changes — otherwise we wait up to 12h for the next cron tick.
+    # No-op silently if the webhook server isn't up or there's no token; the
+    # next cron run is still a safety net.
+    if s['+'] + s['~'] + s['-'] > 0:
+        _trigger_webhook_after_campus_change(target, diff)
     return 0
+
+
+def _trigger_webhook_after_campus_change(target: str, diff: Dict[str, Any]) -> None:
+    """POST /internal/trigger so run.sh fires now instead of waiting for cron.
+    Designed to be best-effort — any failure is logged and swallowed, the
+    cron path still picks the change up next tick."""
+    import urllib.request
+    import urllib.error
+
+    token_path = WORK / ".webhook-token"
+    if not token_path.exists():
+        return
+    try:
+        token = token_path.read_text().strip()
+    except OSError:
+        return
+    if not token:
+        return
+
+    url = "http://127.0.0.1:9876/internal/trigger"
+    body = json.dumps({
+        "source": "campus_sync",
+        "reason": f"campus diff: +{diff['summary']['+']} ~{diff['summary']['~']} -{diff['summary']['-']}",
+        "pipeline": target,
+        "files": (diff.get("added", [])[:5]
+                  + [m['path'] for m in diff.get("modified", [])][:5]),
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "X-Caller": f"campus-sync:{target}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            print(f"[trigger] {target}: queued (HTTP {resp.status})")
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        print(f"[trigger] {target}: webhook unreachable ({e}) — cron will pick up",
+              file=sys.stderr)
 
 
 def cmd_diff(target: str) -> int:
