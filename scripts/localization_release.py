@@ -59,6 +59,7 @@ class ReleaseInfo:
     published_at: str
     asset_url: str
     html_url: str
+    asset_sha256: str = ""  # from GitHub API's asset.digest field ("sha256:...")
 
 
 @dataclass
@@ -84,24 +85,51 @@ class LocalizationDiff:
 
 
 def load_last_release_tag(cache_file: str | None = None) -> str | None:
-    # Resolve module-level constant at call time so tests can monkeypatch it.
+    """Backwards-compat shim — returns just the tag string. Use
+    `load_release_cache` for the dict shape with asset sha."""
+    cache = load_release_cache(cache_file)
+    return cache.get("tag") if cache else None
+
+
+def load_release_cache(cache_file: str | None = None) -> dict:
+    """Load the per-tag release cache. Returns a dict with keys
+    `tag` and `asset_sha256`. Empty dict if missing/unreadable.
+
+    Supports two on-disk formats so older deployments don't break:
+      - new: JSON {"tag": "3.1.0", "asset_sha256": "abc..."}
+      - legacy: plain text "3.1.0\\n"  → migrated to {"tag": "3.1.0"} (no sha)
+
+    The legacy migration means a re-publish of the same tag is detected on
+    the NEXT run after the first re-fetch (the cache is rewritten with sha,
+    and the run after that sees the sha mismatch). Good enough for one-time
+    rollout — no manual cache reset required.
+    """
     target = cache_file if cache_file is not None else LOCALIZATION_RELEASE_CACHE_FILE
     if not os.path.exists(target):
-        return None
+        return {}
     try:
         with open(target, "r", encoding="utf-8") as f:
-            tag = f.read().strip()
-        return tag or None
-    except OSError as e:
+            content = f.read().strip()
+        if not content:
+            return {}
+        if content.startswith("{"):
+            return json.loads(content)
+        # Legacy plain-text tag: migrate transparently.
+        return {"tag": content, "asset_sha256": ""}
+    except (OSError, ValueError) as e:
         LOG_WARN(2, f"Failed to read localization release cache: {e}")
-        return None
+        return {}
 
 
-def save_release_tag(tag: str, cache_file: str | None = None) -> None:
+def save_release_tag(tag: str, cache_file: str | None = None,
+                     asset_sha256: str = "") -> None:
+    """Persist tag + asset sha so a re-publish of the same tag with new
+    content is detected next run."""
     target = cache_file if cache_file is not None else LOCALIZATION_RELEASE_CACHE_FILE
     os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+    payload = {"tag": tag.strip(), "asset_sha256": asset_sha256}
     with open(target, "w", encoding="utf-8") as f:
-        f.write(tag.strip())
+        f.write(json.dumps(payload, ensure_ascii=False))
 
 
 # ============================================================
@@ -138,9 +166,17 @@ def _parse_release_payload(payload: dict) -> ReleaseInfo | None:
         return None
 
     asset_url = ""
+    asset_sha256 = ""
     for asset in payload.get("assets", []):
         if asset.get("name") == LOCALIZATION_RELEASE_ASSET_NAME:
             asset_url = asset.get("browser_download_url", "")
+            # `digest` field shape: "sha256:abc123..." (GitHub API as of 2024+).
+            # Strip the algorithm prefix so callers get the bare hex.
+            digest = asset.get("digest", "") or ""
+            if digest.startswith("sha256:"):
+                asset_sha256 = digest.split(":", 1)[1]
+            else:
+                asset_sha256 = digest
             break
     if not asset_url:
         LOG_ERROR(2, f"Release {tag} has no {LOCALIZATION_RELEASE_ASSET_NAME} asset")
@@ -151,6 +187,7 @@ def _parse_release_payload(payload: dict) -> ReleaseInfo | None:
         published_at=str(payload.get("published_at") or ""),
         asset_url=asset_url,
         html_url=str(payload.get("html_url") or ""),
+        asset_sha256=str(asset_sha256),
     )
 
 

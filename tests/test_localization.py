@@ -94,7 +94,13 @@ class TestLocalizationUpdate:
         assert file_list == []
         assert warnings == {}
 
-    def test_incremental_skips(self):
+    def test_incremental_skips(self, tmp_path, monkeypatch):
+        # Isolate from the production drive xlsx — C2's stale-mtime fallback
+        # would otherwise see the host's real localization.xlsx as newer than
+        # its JSON output and re-convert.
+        from scripts import localization
+        missing = tmp_path / "absent-localization.xlsx"
+        monkeypatch.setattr(localization, "LOCALIZATION_DRIVE_PATH", str(missing))
         errors, successes = ConvertDriveToOutput(drive_file_paths=[])
         assert errors == []
         assert successes == []
@@ -330,17 +336,16 @@ class TestUpdateOriginalToDriveOrchestration:
     """End-to-end orchestration with all external calls mocked."""
 
     def test_gates_on_release_tag(self, tmp_path, monkeypatch):
-        # Set up cache that already saw 3.0.3.
-        cache = tmp_path / "tag.txt"
-        cache.write_text("3.0.3", encoding="utf-8")
-
+        # Cache shows we already processed 3.0.3 with this asset sha.
+        # Skip should happen iff BOTH tag and sha match.
         monkeypatch.setattr(
             "scripts.localization.localization_release.fetch_latest_release",
-            lambda *a, **k: ReleaseInfo(tag="3.0.3", published_at="", asset_url="x", html_url=""),
+            lambda *a, **k: ReleaseInfo(tag="3.0.3", published_at="", asset_url="x",
+                                        html_url="", asset_sha256="abc123"),
         )
         monkeypatch.setattr(
-            "scripts.localization.localization_release.load_last_release_tag",
-            lambda *a, **k: "3.0.3",
+            "scripts.localization.localization_release.load_release_cache",
+            lambda *a, **k: {"tag": "3.0.3", "asset_sha256": "abc123"},
         )
         called = {"download": False}
         def _no_download(*a, **k):
@@ -355,6 +360,41 @@ class TestUpdateOriginalToDriveOrchestration:
         assert file_list == []
         assert warnings == {}
         assert called["download"] is False
+
+    def test_republish_with_new_sha_reprocesses(self, tmp_path, monkeypatch):
+        """Same tag + different asset sha → don't skip (the bug we just fixed)."""
+        xlsx = tmp_path / "localization.xlsx"
+        _release_xlsx(str(xlsx), [("旧", "옛", "ui.k")])
+        notes = tmp_path / "RELEASE_NOTES.md"
+        cache = tmp_path / "tag.json"
+
+        monkeypatch.setattr("scripts.localization.LOCALIZATION_DRIVE_PATH", str(xlsx))
+        monkeypatch.setattr(
+            "scripts.localization_release.LOCALIZATION_RELEASE_NOTES_PATH", str(notes)
+        )
+        monkeypatch.setattr(
+            "scripts.localization_release.LOCALIZATION_RELEASE_CACHE_FILE", str(cache)
+        )
+        # Cache already records tag=3.0.3 sha=OLD_SHA
+        monkeypatch.setattr(
+            "scripts.localization.localization_release.load_release_cache",
+            lambda *a, **k: {"tag": "3.0.3", "asset_sha256": "OLD_SHA"},
+        )
+        monkeypatch.setattr(
+            "scripts.localization.localization_release.fetch_latest_release",
+            lambda *a, **k: ReleaseInfo(tag="3.0.3", published_at="2026-06-13",
+                                        asset_url="https://example/loc.json",
+                                        html_url="https://example/r",
+                                        asset_sha256="NEW_SHA"),
+        )
+        monkeypatch.setattr(
+            "scripts.localization.localization_release.download_release_json",
+            lambda *a, **k: {"ui.k": "新", "ui.added": "追加"},
+        )
+
+        file_list, warnings = UpdateOriginalToDrive()
+        assert len(file_list) == 1, "republish with new sha must trigger re-processing"
+        assert "localization.xlsx" in file_list[0][2]
 
     def test_applies_diff_and_writes_notes(self, tmp_path, monkeypatch):
         # Existing drive xlsx.
@@ -390,7 +430,10 @@ class TestUpdateOriginalToDriveOrchestration:
         assert len(file_list) == 1
         assert "localization.xlsx" in file_list[0][2]
         assert warnings, "should surface warnings for the sheet log"
-        assert cache.read_text(encoding="utf-8") == "3.0.3"
+        # Cache is now JSON {tag, asset_sha256}, not plain text — load via the
+        # helper rather than asserting on raw bytes.
+        cached = json.loads(cache.read_text(encoding="utf-8"))
+        assert cached["tag"] == "3.0.3"
         assert notes.exists()
         assert "## 3.0.3" in notes.read_text(encoding="utf-8")
 
