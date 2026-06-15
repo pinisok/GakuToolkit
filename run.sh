@@ -7,15 +7,34 @@ echo $(date "+%Y-%m-%d %H:%M:%S")
 # 파일 자체는 webhook_server.py / submodule_watcher.py 가 PID 검증용으로 읽으므로
 # 정상 종료 시에만 trap 으로 정리. 비정상 종료 시에도 flock 은 자동 해제되며,
 # webhook/watcher 가 dead PID 감지 후 stale 락 정리.
+#
+# SKIP_FLOCK=1 이면 자체 잠금을 건너뛴다 — webhook_server.py 의 worker 가 이미
+# fcntl.flock 으로 같은 LOCKFILE 을 잡고 호출하기 때문. 중복 시도 시 "Already
+# running" 으로 빠지면 trigger queue 가 매번 no-op 이 되어 의미가 사라짐.
 LOCKFILE="/tmp/gakutoolkit.lock"
-LOCK_FD=200
-eval "exec ${LOCK_FD}>\"\$LOCKFILE\""
-if ! flock -n "$LOCK_FD"; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') Already running (lock held by another process) — skipping"
+if [ "${SKIP_FLOCK:-0}" != "1" ]; then
+    LOCK_FD=200
+    eval "exec ${LOCK_FD}>\"\$LOCKFILE\""
+    if ! flock -n "$LOCK_FD"; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') Already running (lock held by another process) — skipping"
+        exit 0
+    fi
+    echo "$$" > "$LOCKFILE"
+    trap 'rm -f "$LOCKFILE"' EXIT
+else
+    echo "$(date '+%Y-%m-%d %H:%M:%S') SKIP_FLOCK=1 — lock managed by caller (webhook_server)"
+fi
+
+# repo-local 공유 락 (2026-06-11 추가) — NanoClaw 번역 에이전트 컨테이너는 호스트
+# /tmp 를 볼 수 없으므로, res/drive 를 만지는 모든 주체(이 스크립트 + 컨테이너의
+# rclone sync/apply/upload)는 이 파일로 직렬화한다. 컨테이너 쪽 사용법:
+#   flock /workspace/extra/gakutoolkit/.shared.lock -c '<명령>'
+SHARED_LOCK_FD=201
+eval "exec ${SHARED_LOCK_FD}>\"./.shared.lock\""
+if ! flock -w 1800 "$SHARED_LOCK_FD"; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') shared lock timeout — skipping"
     exit 0
 fi
-echo "$$" > "$LOCKFILE"
-trap 'rm -f "$LOCKFILE"' EXIT
 
 # 데이터 동기화 — campus 호출은 /root/worker/GakuToolkit/campus-cron.sh 가 단일
 # 소유자. 여기서는 단순 reader (campus 미호출). cache 가 비어있거나 너무 옛 데이터면
