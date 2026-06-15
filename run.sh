@@ -80,12 +80,19 @@ if ! python3 main.py; then
     exit 1
 fi
 
-# 변경사항이 있을 때만 커밋/푸시
+# 변경사항이 있을 때만 커밋/푸시 — version.txt 만 dirty 인 경우 (= Convert 가 돌았지만
+# 출력 JSON 이 git HEAD 와 byte-identical 인 no-op run) 는 의미 없는 commit 생성하므로
+# 차단. main.py 는 ADV_FILE 비어있지 않으면 무조건 version.txt 에 timestamp 적어서
+# 이런 케이스가 정기적으로 발생함.
 cd output
-if [ -n "$(git status --porcelain)" ]; then
+real_changes=$(git status --porcelain | grep -v '^.M version\.txt$' || true)
+if [ -n "$real_changes" ]; then
     git add --all
     git commit -m "Update translate $(date '+%Y-%m-%d %H:%M')"
     git push origin main
+elif [ -n "$(git status --porcelain)" ]; then
+    echo "no-op run — only version.txt changed, skipping commit"
+    git checkout -- version.txt 2>/dev/null || true
 else
     echo "No changes to push"
 fi
