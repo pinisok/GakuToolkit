@@ -189,6 +189,25 @@ def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
             scripts.gspread.log(log_content, new_file_urls)
         except Exception as e:
             LOG_ERROR(0, f"Failed to log to Google Sheets: {e}")
+    else:
+        # Diagnostic for "sheet wasn't updated" complaints: surface the
+        # exact reason this run skipped the gspread call. Without this,
+        # operators only see silence and assume the call failed.
+        parts = [
+            f"UPDATE: adv={len(U_UPLOAD_ADV['files'])} "
+            f"mdb={len(U_UPLOAD_MASTERDB['files'])} "
+            f"loc={len(U_UPLOAD_LOCALIZATION['files'])}"
+        ]
+        if CONVERT:
+            parts.append(
+                f"CONVERT ok/err: adv={len(C_ADV_FILE[1])}/{len(C_ADV_FILE[0])} "
+                f"mdb={len(C_MASTERDB_FILE[1])}/{len(C_MASTERDB_FILE[0])} "
+                f"gen={len(C_GENERIC_FILE[1])}/{len(C_GENERIC_FILE[0])} "
+                f"loc={len(C_LOCALIZATION_FILE[1])}/{len(C_LOCALIZATION_FILE[0])}"
+            )
+        else:
+            parts.append("CONVERT: disabled")
+        LOG_INFO(0, f"no changes to log — skipping gspread call ({'; '.join(parts)})")
     logHandler.close()
     logStream.close()
 
