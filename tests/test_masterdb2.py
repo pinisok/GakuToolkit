@@ -332,29 +332,51 @@ class TestOverrideRecordToJsonSynthetic:
 
 
 class TestIncrementalModeSkips:
-    """Test that passing empty file list skips conversion (simulates no changes from download)."""
+    """Empty explicit list + no stale local outputs → skip.
 
-    def test_adv_incremental_skips(self):
-        from scripts.adv import ConvertDriveToOutput
-        errors, successes = ConvertDriveToOutput(drive_file_paths=[])
+    Note: Convert() now also walks the local drive dir and converts any xlsx
+    whose output is missing/older (the C2 mtime gate that fixes Phase-2
+    silent-loss). Tests redirect drive/lyrics paths to empty tmp dirs so the
+    fallback scan returns nothing and we exercise the "truly nothing to do"
+    branch.
+    """
+
+    def test_adv_incremental_skips(self, tmp_path, monkeypatch):
+        from scripts import adv
+        empty = tmp_path / "adv-empty"
+        empty.mkdir()
+        monkeypatch.setattr(adv, "ADV_DRIVE_PATH", str(empty))
+        errors, successes = adv.ConvertDriveToOutput(drive_file_paths=[])
         assert errors == []
         assert successes == []
 
-    def test_generic_incremental_skips(self):
-        from scripts.generic import ConvertDriveToOutput
-        errors, successes = ConvertDriveToOutput(drive_file_paths=[])
+    def test_generic_incremental_skips(self, tmp_path, monkeypatch):
+        from scripts import generic
+        empty_lyrics = tmp_path / "lyrics-empty"
+        empty_generic = tmp_path / "generic-empty"
+        empty_lyrics.mkdir()
+        empty_generic.mkdir()
+        monkeypatch.setattr(generic, "GENERIC_DRIVE_LYRICS_PATH", str(empty_lyrics))
+        monkeypatch.setattr(generic, "GENERIC_DRIVE_PATH", str(empty_generic))
+        errors, successes = generic.ConvertDriveToOutput(drive_file_paths=[])
         assert errors == []
         assert successes == []
 
-    def test_localization_incremental_skips(self):
-        from scripts.localization import ConvertDriveToOutput
-        errors, successes = ConvertDriveToOutput(drive_file_paths=[])
+    def test_localization_incremental_skips(self, tmp_path, monkeypatch):
+        from scripts import localization
+        # Point to non-existent path so the "drive xlsx not present" branch fires
+        missing = tmp_path / "absent.xlsx"
+        monkeypatch.setattr(localization, "LOCALIZATION_DRIVE_PATH", str(missing))
+        errors, successes = localization.ConvertDriveToOutput(drive_file_paths=[])
         assert errors == []
         assert successes == []
 
-    def test_masterdb2_incremental_skips(self):
-        from scripts.masterdb2 import ConvertDriveToOutput
-        errors, successes = ConvertDriveToOutput(drive_file_paths=[])
+    def test_masterdb2_incremental_skips(self, tmp_path, monkeypatch):
+        from scripts import masterdb2
+        empty = tmp_path / "mdb-empty"
+        empty.mkdir()
+        monkeypatch.setattr(masterdb2, "MASTERDB2_DRIVE_PATH", str(empty))
+        errors, successes = masterdb2.ConvertDriveToOutput(drive_file_paths=[])
         assert errors == []
         assert successes == []
 """Extended MasterDB2 tests covering DataToRecord, JsonToRecord, CreateJSON, and complex overrides."""
@@ -1971,47 +1993,55 @@ class TestTranslateRuleKey:
 class TestConvertDriveToOutputGeneric:
     """Test generic.ConvertDriveToOutput with synthetic drive files."""
 
-    def test_converts_single_file(self, tmp_path):
+    def test_converts_single_file(self, tmp_path, monkeypatch):
         """Pass a single synthetic file to ConvertDriveToOutput."""
         from tests.fixtures.create_fixtures import create_generic_xlsx
         import scripts.generic as generic
+
+        # Isolate from production drive paths — C2's stale-mtime fallback
+        # would otherwise sweep in the host's real lyrics/* xlsx files.
+        empty_lyrics = tmp_path / "lyrics-empty"
+        empty_generic = tmp_path / "generic-empty"
+        empty_lyrics.mkdir()
+        empty_generic.mkdir()
+        monkeypatch.setattr(generic, "GENERIC_DRIVE_LYRICS_PATH", str(empty_lyrics))
+        monkeypatch.setattr(generic, "GENERIC_DRIVE_PATH", str(empty_generic))
 
         xlsx_path = str(tmp_path / "generic.xlsx")
         create_generic_xlsx(xlsx_path, [
             {"text": "テスト", "trans": "테스트"},
         ])
 
-        saved = generic.GENERIC_OUTPUT_PATH
         output_dir = str(tmp_path / "output")
         os.makedirs(output_dir, exist_ok=True)
-        generic.GENERIC_OUTPUT_PATH = output_dir
+        monkeypatch.setattr(generic, "GENERIC_OUTPUT_PATH", output_dir)
 
-        try:
-            drive_file_paths = [(xlsx_path, "/generic.xlsx", "generic.xlsx")]
-            errors, successes = generic.ConvertDriveToOutput(drive_file_paths)
-        finally:
-            generic.GENERIC_OUTPUT_PATH = saved
+        drive_file_paths = [(xlsx_path, "/generic.xlsx", "generic.xlsx")]
+        errors, successes = generic.ConvertDriveToOutput(drive_file_paths)
 
         assert len(errors) == 0
         assert len(successes) == 1
 
-    def test_handles_conversion_error(self, tmp_path):
+    def test_handles_conversion_error(self, tmp_path, monkeypatch):
         """Invalid xlsx should produce error, not crash."""
         import scripts.generic as generic
+
+        empty_lyrics = tmp_path / "lyrics-empty"
+        empty_generic = tmp_path / "generic-empty"
+        empty_lyrics.mkdir()
+        empty_generic.mkdir()
+        monkeypatch.setattr(generic, "GENERIC_DRIVE_LYRICS_PATH", str(empty_lyrics))
+        monkeypatch.setattr(generic, "GENERIC_DRIVE_PATH", str(empty_generic))
 
         bad_path = str(tmp_path / "bad.xlsx")
         with open(bad_path, "w") as f:
             f.write("not an xlsx")
 
-        saved = generic.GENERIC_OUTPUT_PATH
-        generic.GENERIC_OUTPUT_PATH = str(tmp_path / "output")
+        monkeypatch.setattr(generic, "GENERIC_OUTPUT_PATH", str(tmp_path / "output"))
         os.makedirs(generic.GENERIC_OUTPUT_PATH, exist_ok=True)
 
-        try:
-            drive_file_paths = [(bad_path, "/bad.xlsx", "bad.xlsx")]
-            errors, successes = generic.ConvertDriveToOutput(drive_file_paths)
-        finally:
-            generic.GENERIC_OUTPUT_PATH = saved
+        drive_file_paths = [(bad_path, "/bad.xlsx", "bad.xlsx")]
+        errors, successes = generic.ConvertDriveToOutput(drive_file_paths)
 
         assert len(errors) == 1
         assert len(successes) == 0

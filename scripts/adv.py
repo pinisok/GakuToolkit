@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .helper import (
     Helper_GetFilesFromDir,
+    Helper_FilterStaleByOutput,
 )
 from .log import LOG_DEBUG, LOG_INFO, LOG_ERROR, logger
 
@@ -232,14 +233,44 @@ def UpdateOriginalToDrive():
     return file_list, all_warnings
 
 
-def ConvertDriveToOutput(drive_file_paths=None, bFullUpdate=False):
-    """Convert: Google Drive XLSX → GakumasTranslationDataKor TXT."""
-    if drive_file_paths is None:
-        LOG_DEBUG(2, "No file list provided, scanning local drive")
-        drive_file_paths = Helper_GetFilesFromDir(ADV_DRIVE_PATH, ".xlsx", "adv_")
-    if len(drive_file_paths) <= 0:
-        LOG_INFO(2, "ADV is not updated, skip")
-        return [], []
-    LOG_INFO(2, f"Converting {len(drive_file_paths)} adv files")
+def _adv_output_for(tpl):
+    """xlsx tuple → expected output .txt path. Used by stale-detection."""
+    _abs, _rel, filename = tpl
+    if not filename.endswith(".xlsx"):
+        return None
+    return os.path.join(ADV_OUTPUT_PATH, filename[:-5] + ".txt")
 
-    return _convert_xlsx_to_txt_batch(drive_file_paths)
+
+def ConvertDriveToOutput(drive_file_paths=None, bFullUpdate=False):
+    """Convert: Google Drive XLSX → GakumasTranslationDataKor TXT.
+
+    Triggers (union):
+      * Explicit `drive_file_paths` from Phase 0 (rclone diff).
+      * Local mtime scan — any xlsx whose .txt output is missing or older.
+    The mtime fallback catches xlsx mutations from any source (Phase 2,
+    agent direct edit, external script) that Phase 0's diff would miss.
+    """
+    all_local = Helper_GetFilesFromDir(ADV_DRIVE_PATH, ".xlsx", "adv_")
+    stale = Helper_FilterStaleByOutput(all_local, _adv_output_for)
+
+    if drive_file_paths is None:
+        LOG_DEBUG(2, "No file list provided, using local stale-mtime scan")
+        to_convert = stale
+    else:
+        seen, to_convert = set(), []
+        for tpl in list(drive_file_paths) + stale:
+            if tpl[0] in seen:
+                continue
+            seen.add(tpl[0])
+            to_convert.append(tpl)
+
+    if not to_convert:
+        LOG_INFO(2, "ADV is up-to-date, skip")
+        return [], []
+    LOG_INFO(
+        2,
+        f"Converting {len(to_convert)} adv files "
+        f"(explicit={len(drive_file_paths or [])}, stale-by-mtime={len(stale)})",
+    )
+
+    return _convert_xlsx_to_txt_batch(to_convert)
