@@ -34,6 +34,7 @@ import hashlib
 import hmac
 import logging
 import os
+import secrets
 import subprocess
 import sys
 import threading
@@ -92,47 +93,71 @@ log = logging.getLogger("webhook")
 # `_last_triggers` keeps a short tail of recent trigger reasons for the
 # /status endpoint — debugging aid only.
 
-_pending = False
+_pending: list[dict] = []        # queue of trigger entries awaiting a drain
 _pending_lock = threading.Lock()
 _worker_lock = threading.Lock()
-_run_state = {"in_progress": False, "last_started_at": None, "last_finished_at": None,
-              "last_exit_code": None, "last_log": None, "runs_total": 0,
-              "runs_failed": 0}
+_run_state = {
+    "in_progress": False, "current_trigger_ids": [],
+    "last_started_at": None, "last_finished_at": None,
+    "last_exit_code": None, "last_log": None, "last_trigger_ids": [],
+    "last_failure_at": None, "last_failure_detail": None, "last_failure_log": None,
+    "runs_total": 0, "runs_failed": 0, "runs_coalesced": 0,
+}
 _run_state_lock = threading.Lock()
 _last_triggers: list[dict] = []
 _LAST_TRIGGERS_MAX = 20
 
 
-def _enqueue_trigger(reason: dict) -> None:
-    """Mark work pending and ensure a drain thread is running."""
-    global _pending
+def _new_trigger_id() -> str:
+    """Short, log-friendly id. urlsafe base64 of 6 random bytes."""
+    return secrets.token_urlsafe(6)
+
+
+def _enqueue_trigger(reason: dict) -> str:
+    """Mark work pending, capture the trigger entry, and ensure a drain
+    thread is running. Returns the trigger_id (caller logs it + echoes to
+    the HTTP response so callers can grep follow-on log lines)."""
+    tid = _new_trigger_id()
+    entry = {
+        "tid": tid,
+        "at": datetime.datetime.now().isoformat(timespec="seconds"),
+        **reason,
+    }
     with _pending_lock:
-        _pending = True
-    with _pending_lock:
-        _last_triggers.append({
-            "at": datetime.datetime.now().isoformat(timespec="seconds"),
-            **reason,
-        })
+        _pending.append(entry)
+        _last_triggers.append(entry)
         del _last_triggers[:-_LAST_TRIGGERS_MAX]
+    log.info(f"[tid={tid}] enqueued: {reason}")
     threading.Thread(target=_drain, daemon=True, name="trigger-drain").start()
+    return tid
 
 
 def _drain() -> None:
     """Run pending work; coalesce concurrent triggers into at most one
     additional run after the current one. Only one drain thread executes;
-    others return immediately because `_pending` is preserved and the running
-    worker will see it next iteration.
+    others return immediately because the queue contents are preserved and
+    the running worker will see them next iteration.
     """
-    global _pending
     if not _worker_lock.acquire(blocking=False):
+        log.debug("drain: another worker is active — pending stays queued")
         return
     try:
+        rounds = 0
         while True:
             with _pending_lock:
                 if not _pending:
+                    if rounds > 1:
+                        with _run_state_lock:
+                            _run_state["runs_coalesced"] += rounds - 1
+                        log.info(f"drain: completed {rounds} rounds (coalesced extras)")
                     return
-                _pending = False
-            _run_pipeline()
+                # Drain everything currently pending into a single run.
+                batch = list(_pending)
+                _pending.clear()
+            tids = [e["tid"] for e in batch]
+            log.info(f"drain: starting round={rounds + 1} batch_size={len(batch)} tids={tids}")
+            _run_pipeline(tids)
+            rounds += 1
     finally:
         _worker_lock.release()
 
@@ -162,39 +187,80 @@ def _acquire_flock_with_wait(timeout: float):
             time.sleep(1.0)
 
 
-def _run_pipeline() -> None:
+def _tail_file(path: Path, lines: int = 20) -> str:
+    """Best-effort tail for failure-detail capture."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            block = min(size, 8192)
+            f.seek(size - block)
+            data = f.read().decode("utf-8", errors="replace")
+        return "\n".join(data.splitlines()[-lines:])
+    except OSError as e:
+        return f"<could not read {path.name}: {e}>"
+
+
+def _run_pipeline(trigger_ids: list[str]) -> None:
     """Invoke run.sh under the cross-process flock. Blocks up to
-    TRIGGER_FLOCK_TIMEOUT for the cron-side runner to release."""
+    TRIGGER_FLOCK_TIMEOUT for the cron-side runner to release.
+
+    `trigger_ids` is the batch of caller-visible ids — included in log
+    lines so an operator can grep `tid=...` across webhook.log and the
+    per-run output log to follow one trigger end-to-end.
+    """
     started_at = datetime.datetime.now()
     logfile = WORKDIR / f"output_webhook_{started_at:%Y%m%d_%H%M%S}.log"
+    tag = f"tids={trigger_ids}" if trigger_ids else "tids=[]"
     log.info(
-        f"_run_pipeline start — waiting for flock (timeout={TRIGGER_FLOCK_TIMEOUT}s), log={logfile.name}"
+        f"[{tag}] _run_pipeline start — waiting for flock "
+        f"(timeout={TRIGGER_FLOCK_TIMEOUT}s), log={logfile.name}"
     )
 
     with _run_state_lock:
         _run_state.update({
             "in_progress": True,
+            "current_trigger_ids": list(trigger_ids),
             "last_started_at": started_at.isoformat(timespec="seconds"),
             "last_log": logfile.name,
+            "last_trigger_ids": list(trigger_ids),
         })
 
     fd = _acquire_flock_with_wait(TRIGGER_FLOCK_TIMEOUT)
     if fd is None:
-        log.error(
-            f"_run_pipeline aborted — timed out waiting {TRIGGER_FLOCK_TIMEOUT}s for {LOCKFILE}"
+        detail = (
+            f"timed out waiting {TRIGGER_FLOCK_TIMEOUT}s for {LOCKFILE}. "
+            "Cron run.sh may be stuck or campus-cron is holding LOCKFILE."
         )
+        log.error(f"[{tag}] _run_pipeline aborted — {detail}")
+        finished_at = datetime.datetime.now()
         with _run_state_lock:
-            _run_state["in_progress"] = False
-            _run_state["last_finished_at"] = datetime.datetime.now().isoformat(timespec="seconds")
-            _run_state["last_exit_code"] = -1
+            _run_state.update({
+                "in_progress": False,
+                "current_trigger_ids": [],
+                "last_finished_at": finished_at.isoformat(timespec="seconds"),
+                "last_exit_code": -1,
+                "last_failure_at": finished_at.isoformat(timespec="seconds"),
+                "last_failure_detail": detail,
+                "last_failure_log": logfile.name,
+            })
             _run_state["runs_total"] += 1
             _run_state["runs_failed"] += 1
         return
 
+    proc = None
+    exception_detail = None
     try:
         LOCKFILE.write_text(f"{os.getpid()}\n")
         env = {**os.environ, "SKIP_FLOCK": "1"}
         with open(logfile, "w") as out:
+            out.write(
+                f"=== webhook-triggered run.sh ===\n"
+                f"started_at: {started_at.isoformat(timespec='seconds')}\n"
+                f"trigger_ids: {trigger_ids}\n"
+                f"================================\n\n"
+            )
+            out.flush()
             proc = subprocess.run(
                 ["bash", "run.sh"],
                 cwd=str(WORKDIR),
@@ -202,6 +268,9 @@ def _run_pipeline() -> None:
                 stdout=out,
                 stderr=subprocess.STDOUT,
             )
+    except Exception as e:
+        exception_detail = f"subprocess raised {type(e).__name__}: {e}"
+        log.exception(f"[{tag}] _run_pipeline subprocess failure")
     finally:
         try:
             fcntl.flock(fd, fcntl.LOCK_UN)
@@ -210,16 +279,32 @@ def _run_pipeline() -> None:
 
     finished_at = datetime.datetime.now()
     duration = (finished_at - started_at).total_seconds()
-    with _run_state_lock:
-        _run_state["in_progress"] = False
-        _run_state["last_finished_at"] = finished_at.isoformat(timespec="seconds")
-        _run_state["last_exit_code"] = proc.returncode
-        _run_state["runs_total"] += 1
-        if proc.returncode != 0:
-            _run_state["runs_failed"] += 1
+    exit_code = proc.returncode if proc is not None else -1
+    failed = exception_detail is not None or exit_code != 0
 
-    log.info(
-        f"_run_pipeline done — exit={proc.returncode} duration={duration:.1f}s log={logfile.name}"
+    with _run_state_lock:
+        _run_state.update({
+            "in_progress": False,
+            "current_trigger_ids": [],
+            "last_finished_at": finished_at.isoformat(timespec="seconds"),
+            "last_exit_code": exit_code,
+        })
+        _run_state["runs_total"] += 1
+        if failed:
+            _run_state["runs_failed"] += 1
+            _run_state["last_failure_at"] = finished_at.isoformat(timespec="seconds")
+            _run_state["last_failure_log"] = logfile.name
+            _run_state["last_failure_detail"] = (
+                exception_detail
+                or f"run.sh exited with code {exit_code}. Tail of {logfile.name}:\n"
+                f"{_tail_file(logfile, lines=20)}"
+            )
+
+    level = log.error if failed else log.info
+    level(
+        f"[{tag}] _run_pipeline done — exit={exit_code} "
+        f"duration={duration:.1f}s log={logfile.name}"
+        + (" (FAILED — see /status for detail)" if failed else "")
     )
 
 
@@ -284,8 +369,8 @@ def github_webhook():
     if ref not in ("refs/heads/main", "refs/heads/master"):
         return jsonify({"status": "ignored", "reason": "not_main_branch"})
 
-    _enqueue_trigger({"source": "github", "repo": repo, "ref": ref})
-    return jsonify({"status": "queued", "source": "github", "repo": repo}), 202
+    tid = _enqueue_trigger({"source": "github", "repo": repo, "ref": ref})
+    return jsonify({"status": "queued", "tid": tid, "source": "github", "repo": repo}), 202
 
 
 @app.route("/internal/trigger", methods=["POST"])
@@ -312,23 +397,61 @@ def internal_trigger():
         "files": body.get("files", []),
         "caller": request.headers.get("X-Caller", ""),
     }
-    log.info(f"Internal trigger queued: {reason}")
-    _enqueue_trigger(reason)
-    return jsonify({"status": "queued", **reason}), 202
+    tid = _enqueue_trigger(reason)
+    return jsonify({"status": "queued", "tid": tid, **reason}), 202
 
 
 @app.route("/status", methods=["GET"])
 def status():
+    """Compact diagnostic snapshot. Look here first when 'did my trigger run'
+    is the question; cross-reference `tid` against webhook.log / the named
+    last_log file for full detail.
+    """
     with _pending_lock:
-        pending = _pending
+        pending_count = len(_pending)
+        pending_tids = [e.get("tid") for e in _pending]
         recent = list(_last_triggers)
     with _run_state_lock:
         run_state = dict(_run_state)
     return jsonify({
-        "pending": pending,
+        "pending_count": pending_count,
+        "pending_tids": pending_tids,
         "run_state": run_state,
-        "recent_triggers": recent[-5:],
+        "recent_triggers": recent[-10:],
         "lock_exists": LOCKFILE.exists(),
+        "webhook_log": str(LOGFILE.name),
+    })
+
+
+@app.route("/logs/recent", methods=["GET"])
+def logs_recent():
+    """Return the last N lines of webhook.log and the most recent run output
+    log (when present). Lets an operator diagnose without ssh-ing in. No
+    auth — content is internal-only since the host bind is LAN/bridge only.
+    Override count via ?lines=N (default 50, max 500).
+    """
+    try:
+        lines = max(1, min(int(request.args.get("lines", "50")), 500))
+    except ValueError:
+        lines = 50
+
+    last_run = None
+    with _run_state_lock:
+        last_log_name = _run_state.get("last_log")
+    if last_log_name:
+        last_run_path = WORKDIR / last_log_name
+        if last_run_path.exists():
+            last_run = {
+                "name": last_log_name,
+                "tail": _tail_file(last_run_path, lines=lines),
+            }
+
+    return jsonify({
+        "webhook_log": {
+            "name": LOGFILE.name,
+            "tail": _tail_file(LOGFILE, lines=lines),
+        },
+        "last_run_log": last_run,
     })
 
 
