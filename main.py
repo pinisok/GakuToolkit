@@ -6,6 +6,7 @@ from scripts import rclone, adv, masterdb2, generic, localization
 from scripts.log import *
 
 full_update = False
+reconcile = False
 CONVERT = True
 UPDATE = True
 
@@ -45,14 +46,14 @@ def Convert(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True, bFullUpdat
         LOG_INFO(1, "No files updated")
     return (ERR_ADV_FILE, ADV_FILE), (ERR_MASTERDB_FILE, MASTERDB_FILE), (ERR_GENERIC_FILE, GENERIC_FILE), (ERR_LOCALIZATION_FILE, LOCALIZATION_FILE)
 
-def Update(ADV=True, MASTERDB=True, LOCALIZATION=True, bFullUpdate=False):
+def Update(ADV=True, MASTERDB=True, LOCALIZATION=True, bFullUpdate=False, reconcile=False):
     ADV_FILE = []
     MASTERDB_FILE = []
     LOCALIZATION_FILE = []
     all_warnings = {}
     if ADV:
         LOG_INFO(1, "Updating ADV")
-        ADV_FILE, adv_warnings = adv.UpdateOriginalToDrive()
+        ADV_FILE, adv_warnings = adv.UpdateOriginalToDrive(reconcile=reconcile)
         all_warnings.update(adv_warnings)
     if MASTERDB:
         LOG_INFO(1, "Updating MasterDB")
@@ -142,7 +143,7 @@ def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
     update_warnings = {}
     if UPDATE:
         LOG_INFO(0, "Phase 2: Update")
-        _, _, _, update_warnings = Update(ADV, MASTERDB, LOCALIZATION, full_update)
+        _, _, _, update_warnings = Update(ADV, MASTERDB, LOCALIZATION, full_update, reconcile=reconcile)
 
         LOG_INFO(0, "Phase 3: Upload to Drive")
         U_UPLOAD_ADV, U_UPLOAD_MASTERDB, U_UPLOAD_LOCALIZATION = sync.upload_all(
@@ -203,6 +204,12 @@ def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--fullupdate', action='store_true')
+    parser.add_argument('--reconcile', action='store_true',
+                        help='Phase 2: also read every Drive xlsx and verify '
+                             'its text column matches the campus original. '
+                             'Catches agent regressions where applied.sha is '
+                             'still correct but the xlsx silently reverted. '
+                             '~30-60s extra runtime for ~3700 ADV files.')
     parser.add_argument('--DEBUG', action='store_true')
     parser.add_argument('--convert', action='store_true')
     parser.add_argument('--update', action='store_true')
@@ -213,6 +220,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.fullupdate:
         full_update = True
+    if args.reconcile:
+        reconcile = True
     if args.DEBUG:
         logger.setLevel("DEBUG")
     else:
