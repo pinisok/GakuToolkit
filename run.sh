@@ -57,8 +57,12 @@ rm -f ./res/masterdb/data/*
 rm -rf ./res/masterdb/gakumasu-diff/json
 rm -rf ./res/masterdb/pretranslate_todo/
 
-# 7일 이상 된 로그 파일 정리
+# 7일 이상 된 로그 파일 정리 (run.sh의 output_*, webhook_server 의 output_webhook_*,
+# webhook 자체 로그 회전 별도). webhook.log 는 systemd journal 이 함께 잡고 있으므로
+# 너무 커지지 않도록 30일 컷.
 find . -maxdepth 1 -name "output_python_*.log" -mtime +7 -delete 2>/dev/null || true
+find . -maxdepth 1 -name "output_webhook_*.log" -mtime +7 -delete 2>/dev/null || true
+find ./logs -maxdepth 1 -name "*.log" -mtime +30 -delete 2>/dev/null || true
 
 # output 서브모듈 현재 상태 기록 (Phase 1 실패 시 복구용)
 OUTPUT_HEAD=""
