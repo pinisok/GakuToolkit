@@ -51,7 +51,16 @@ python3 scripts/campus_sync.py sync adv     --skip-campus || { echo "❌ adv syn
 # CLAUDE.local.md 만 손대면 됨.
 
 # output 서브모듈은 여전히 git (push 대상이므로 git 워크플로우 유지)
+# CRITICAL: `git submodule update --remote` 가 기본적으로 detached HEAD 로
+# checkout 한다. 그 상태에서 후행 commit + `git push origin main` 을 하면
+# local main ref 가 미변경이라 push 가 사실상 no-op 이 되고, 만들어진
+# commit 은 다음 submodule update 시 잃어버린다.
+# (2026-06-17~06-19 동안 7+ 개 cron commit 이 이 경로로 orphan 되었음.)
+# 그래서 submodule update 후 명시적으로 main branch 로 옮긴 뒤
+# origin/main 에 강제 정렬한다.
 git submodule update --init --remote -- output
+git -C output checkout main 2>/dev/null || git -C output checkout -B main
+git -C output reset --hard origin/main
 
 # masterdb 변환 결과 정리 (campus의 orig 이외 산출물)
 rm -f ./res/masterdb/data/*
