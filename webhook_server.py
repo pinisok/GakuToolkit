@@ -51,6 +51,15 @@ PORT = int(os.environ.get("WEBHOOK_PORT", 9876))
 SECRET = os.environ.get("WEBHOOK_SECRET", "")
 INTERNAL_TRIGGER_TOKEN = os.environ.get("INTERNAL_TRIGGER_TOKEN", "").strip()
 TRIGGER_FLOCK_TIMEOUT = int(os.environ.get("TRIGGER_FLOCK_TIMEOUT", "1800"))
+TRIGGER_RETRY_DELAY = int(os.environ.get(
+    "TRIGGER_RETRY_DELAY", os.environ.get("GAKUTOOLKIT_RETRY_DELAY_SECONDS", "300")
+))
+TRIGGER_RETRY_MAX_ATTEMPTS = int(os.environ.get(
+    "TRIGGER_RETRY_MAX_ATTEMPTS", os.environ.get("GAKUTOOLKIT_RETRY_MAX_ATTEMPTS", "12")
+))
+ENABLE_GITHUB_MIRROR_WEBHOOK = os.environ.get(
+    "ENABLE_GITHUB_MIRROR_WEBHOOK", "0"
+).strip().lower() in {"1", "true", "yes", "on"}
 
 WORKDIR = Path(__file__).resolve().parent
 LOCKFILE = Path("/tmp/gakutoolkit.lock")
@@ -101,7 +110,8 @@ _run_state = {
     "last_started_at": None, "last_finished_at": None,
     "last_exit_code": None, "last_log": None, "last_trigger_ids": [],
     "last_failure_at": None, "last_failure_detail": None, "last_failure_log": None,
-    "runs_total": 0, "runs_failed": 0, "runs_coalesced": 0,
+    "last_retry_at": None, "last_retry_detail": None,
+    "runs_total": 0, "runs_failed": 0, "runs_coalesced": 0, "runs_deferred": 0,
 }
 _run_state_lock = threading.Lock()
 _last_triggers: list[dict] = []
@@ -155,8 +165,9 @@ def _drain() -> None:
                 batch = list(_pending)
                 _pending.clear()
             tids = [e["tid"] for e in batch]
+            retry_attempt = max(int(e.get("retry_attempt", 0) or 0) for e in batch)
             log.info(f"drain: starting round={rounds + 1} batch_size={len(batch)} tids={tids}")
-            _run_pipeline(tids)
+            _run_pipeline(tids, retry_attempt=retry_attempt)
             rounds += 1
     finally:
         _worker_lock.release()
@@ -201,7 +212,47 @@ def _tail_file(path: Path, lines: int = 20) -> str:
         return f"<could not read {path.name}: {e}>"
 
 
-def _run_pipeline(trigger_ids: list[str]) -> None:
+def _schedule_pipeline_retry(trigger_ids: list[str], detail: str, retry_attempt: int = 0) -> str | None:
+    """Re-enqueue a lock-blocked trigger after a short delay.
+
+    This turns transient duplicate execution / flock contention into a delayed
+    retry instead of a dropped failure. The retry is intentionally a fresh
+    internal trigger because run.sh is idempotent and will resync current state.
+    """
+    if retry_attempt >= TRIGGER_RETRY_MAX_ATTEMPTS:
+        log.error(
+            "retry exhausted after %s attempt(s) for tids=%s: %s",
+            retry_attempt,
+            trigger_ids,
+            detail,
+        )
+        return None
+
+    next_attempt = retry_attempt + 1
+    retry_at = datetime.datetime.now() + datetime.timedelta(seconds=TRIGGER_RETRY_DELAY)
+
+    def _enqueue_retry() -> None:
+        tid = _enqueue_trigger({
+            "source": "webhook-retry",
+            "reason": f"retry after lock timeout: {detail}",
+            "retry_of": list(trigger_ids),
+            "retry_attempt": next_attempt,
+        })
+        log.info(
+            "scheduled retry fired — original_tids=%s retry_tid=%s attempt=%s/%s",
+            trigger_ids,
+            tid,
+            next_attempt,
+            TRIGGER_RETRY_MAX_ATTEMPTS,
+        )
+
+    timer = threading.Timer(TRIGGER_RETRY_DELAY, _enqueue_retry)
+    timer.daemon = True
+    timer.start()
+    return retry_at.isoformat(timespec="seconds")
+
+
+def _run_pipeline(trigger_ids: list[str], retry_attempt: int = 0) -> None:
     """Invoke run.sh under the cross-process flock. Blocks up to
     TRIGGER_FLOCK_TIMEOUT for the cron-side runner to release.
 
@@ -230,22 +281,27 @@ def _run_pipeline(trigger_ids: list[str]) -> None:
     if fd is None:
         detail = (
             f"timed out waiting {TRIGGER_FLOCK_TIMEOUT}s for {LOCKFILE}. "
-            "Cron run.sh may be stuck or campus-cron is holding LOCKFILE."
+            "Another run is still active; scheduling a retry instead of dropping the trigger."
         )
-        log.error(f"[{tag}] _run_pipeline aborted — {detail}")
+        retry_at = _schedule_pipeline_retry(trigger_ids, detail, retry_attempt=retry_attempt)
+        if retry_at is None:
+            log.error(f"[{tag}] _run_pipeline retry exhausted — {detail}")
+        else:
+            log.warning(f"[{tag}] _run_pipeline deferred — {detail} retry_at={retry_at}")
         finished_at = datetime.datetime.now()
         with _run_state_lock:
             _run_state.update({
                 "in_progress": False,
                 "current_trigger_ids": [],
                 "last_finished_at": finished_at.isoformat(timespec="seconds"),
-                "last_exit_code": -1,
-                "last_failure_at": finished_at.isoformat(timespec="seconds"),
-                "last_failure_detail": detail,
-                "last_failure_log": logfile.name,
+                "last_retry_at": retry_at,
+                "last_retry_detail": detail,
             })
-            _run_state["runs_total"] += 1
-            _run_state["runs_failed"] += 1
+            _run_state["runs_deferred"] += 1
+            if retry_at is None:
+                _run_state["runs_failed"] += 1
+                _run_state["last_failure_at"] = finished_at.isoformat(timespec="seconds")
+                _run_state["last_failure_detail"] = detail
         return
 
     proc = None
@@ -356,6 +412,16 @@ def github_webhook():
         log.info(f"Ignored event: {event}")
         return jsonify({"status": "ignored", "event": event})
 
+    if not ENABLE_GITHUB_MIRROR_WEBHOOK:
+        log.info(
+            "Ignored GitHub mirror push webhook because campus-primary mode "
+            "owns original-data updates"
+        )
+        return jsonify({
+            "status": "ignored",
+            "reason": "github_mirror_webhook_disabled_campus_primary_mode",
+        })
+
     payload = request.get_json(silent=True)
     if not payload:
         abort(400, "Invalid JSON")
@@ -420,6 +486,8 @@ def status():
         "recent_triggers": recent[-10:],
         "lock_exists": LOCKFILE.exists(),
         "webhook_log": str(LOGFILE.name),
+        "github_mirror_webhook_enabled": ENABLE_GITHUB_MIRROR_WEBHOOK,
+        "watched_repos": sorted(WATCHED_REPOS) if ENABLE_GITHUB_MIRROR_WEBHOOK else [],
     })
 
 
@@ -466,8 +534,15 @@ def health():
 
 if __name__ == "__main__":
     log.info(f"Starting webhook server on port {PORT}")
-    log.info(f"Watching repos: {WATCHED_REPOS}")
+    log.info(
+        "GitHub mirror webhook: %s%s",
+        "enabled" if ENABLE_GITHUB_MIRROR_WEBHOOK else "disabled (campus-primary mode)",
+        f"; watched repos: {WATCHED_REPOS}" if ENABLE_GITHUB_MIRROR_WEBHOOK else "",
+    )
     log.info(f"Work directory: {WORKDIR}")
     log.info(f"Internal trigger: {'enabled' if INTERNAL_TRIGGER_TOKEN else 'DISABLED (set INTERNAL_TRIGGER_TOKEN)'}")
-    log.info(f"flock timeout: {TRIGGER_FLOCK_TIMEOUT}s")
+    log.info(
+        f"flock timeout: {TRIGGER_FLOCK_TIMEOUT}s; retry delay: {TRIGGER_RETRY_DELAY}s; "
+        f"retry max attempts: {TRIGGER_RETRY_MAX_ATTEMPTS}"
+    )
     app.run(host="0.0.0.0", port=PORT, debug=False)

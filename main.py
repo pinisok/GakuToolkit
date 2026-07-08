@@ -182,6 +182,12 @@ def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
             LOG_INFO(0, "----------------------------------------------------------")
         else:
             LOG_INFO(0, "No files converted")
+        total_errors = len(C_ADV_FILE[0]) + len(C_MASTERDB_FILE[0]) + len(C_GENERIC_FILE[0]) + len(C_LOCALIZATION_FILE[0])
+        if total_errors > 0:
+            LOG_WARN(
+                0,
+                f"Convert phase had {total_errors} error(s); continuing with successfully converted outputs",
+            )
     log_content = logStream.getvalue()
     if has_changes:
         try:
@@ -210,14 +216,6 @@ def main(ADV=True, MASTERDB=True, GENERIC=True, LOCALIZATION=True):
         LOG_INFO(0, f"no changes to log — skipping gspread call ({'; '.join(parts)})")
     logHandler.close()
     logStream.close()
-
-    # Exit with error if any conversion failures occurred
-    if CONVERT:
-        total_errors = len(C_ADV_FILE[0]) + len(C_MASTERDB_FILE[0]) + len(C_GENERIC_FILE[0]) + len(C_LOCALIZATION_FILE[0])
-        if total_errors > 0:
-            LOG_ERROR(0, f"Convert phase had {total_errors} error(s)")
-            raise SystemExit(1)
-    
 
 
 if __name__ == "__main__":

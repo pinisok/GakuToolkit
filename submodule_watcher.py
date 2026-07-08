@@ -1,9 +1,10 @@
-"""Campus revision watcher — polls campus state for new master/asset revisions.
+"""Campus primary revision watcher — polls campus state for new revisions.
 
-Watches campus's own state files (octo_cache.json + config.yaml) for changes
-caused by an external campus invocation (e.g. gkms-texture-tools cronjob
-calling `campus -ab --webab`, or a separate `campus -db` cron). When campus
-publishes a new revision, this watcher triggers run.sh.
+This file keeps its historical name for service compatibility, but it no
+longer watches Git submodule mirrors. In campus-primary mode, campus owns
+original game-data update detection; this watcher observes campus's own state
+files (octo_cache.json + config.yaml) and triggers run.sh when campus publishes
+a new master/asset revision.
 
 Two signals are tracked:
   - octoCacheRevision (asset bundles) — bumped by `campus -ab`

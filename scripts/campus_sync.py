@@ -360,6 +360,14 @@ def _append_journal(target: str, diff: Dict[str, Any], campus_exit: int, used_fa
             "removed": diff["removed"][:5],
             "modified": [m["path"] for m in diff["modified"][:5]],
         },
+        # Full file lists are required by the Hermes ADV handoff watcher.
+        # `*.diff.json` is overwritten by later no-op runs, so journal entries
+        # must retain the complete actionable payload for downstream agents.
+        "files": {
+            "added": diff["added"],
+            "removed": diff["removed"],
+            "modified": [m["path"] for m in diff["modified"]],
+        },
     }
     with (MANIFEST_DIR / f"{target}.journal.jsonl").open("a") as f:
         f.write(json.dumps(event, ensure_ascii=False) + "\n")
@@ -434,8 +442,17 @@ def _do_sync(target: str, spec: Dict[str, Any], source_dir: Path, pattern: str,
     # No-op silently if the webhook server isn't up or there's no token; the
     # next cron run is still a safety net.
     if s['+'] + s['~'] + s['-'] > 0:
-        _trigger_webhook_after_campus_change(target, diff)
+        if _post_sync_trigger_enabled():
+            _trigger_webhook_after_campus_change(target, diff)
+        else:
+            print(f"[trigger] {target}: suppressed by GAKUTOOLKIT_SUPPRESS_POST_SYNC_TRIGGER")
     return 0
+
+
+def _post_sync_trigger_enabled() -> bool:
+    return os.environ.get(
+        "GAKUTOOLKIT_SUPPRESS_POST_SYNC_TRIGGER", ""
+    ).strip().lower() not in {"1", "true", "yes", "on"}
 
 
 def _trigger_webhook_after_campus_change(target: str, diff: Dict[str, Any]) -> None:

@@ -11,6 +11,7 @@ These tests cover the gaps identified in the review:
 import os
 import json
 import logging
+import sys
 
 import pytest
 
@@ -141,6 +142,52 @@ class TestConvertOrchestration:
         for errors, successes in result:
             assert errors == []
             assert successes == []
+
+    def test_main_continues_when_convert_has_partial_errors(self, monkeypatch, caplog):
+        """A-policy: one bad converted file should not make main.py exit non-zero.
+
+        The successful conversion output still needs to be committed/pushed by
+        run.sh, while the failed file is surfaced in the run summary.
+        """
+        import main as m
+        import scripts.sync as sync
+
+        monkeypatch.setattr(m, "CONVERT", True)
+        monkeypatch.setattr(m, "UPDATE", True)
+        monkeypatch.setattr(sync, "download_all", lambda *a, **k: {})
+        monkeypatch.setattr(
+            m,
+            "Convert",
+            lambda *a, **k: (
+                ([(Exception("validation mismatch"), "bad_adv.xlsx")], ["good_adv.xlsx"]),
+                ([], []),
+                ([], []),
+                ([], []),
+            ),
+        )
+        monkeypatch.setattr(
+            m,
+            "Update",
+            lambda *a, **k: ({"files": [], "remote_path": ""}, [], [], {}),
+        )
+
+        import scripts
+
+        gspread_calls = []
+        fake_gspread = sys.modules["scripts.gspread"]
+        monkeypatch.setattr(scripts, "gspread", fake_gspread, raising=False)
+        monkeypatch.setattr(
+            fake_gspread,
+            "log",
+            lambda logs, new_file_urls=None: gspread_calls.append(logs),
+        )
+
+        with caplog.at_level(logging.INFO, logger="GakuToolkit"):
+            m.main()
+
+        assert gspread_calls, "partial convert summary should still be logged"
+        assert any("변환 중 오류 bad_adv.xlsx" in r.message for r in caplog.records)
+        assert any("Convert phase had 1 error(s)" in r.message for r in caplog.records)
 
 
 # ============================================================
