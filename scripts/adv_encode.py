@@ -22,7 +22,8 @@ def _encode(string: str) -> str:
     return string
 
 
-END_EM_LENGTH = 5
+START_EM_LENGTH = len("<em>")
+END_EM_LENGTH = len("</em>")
 
 _EM_PATTERN = re.compile(r'<em(?:\\?=)?>')
 
