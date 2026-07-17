@@ -1,4 +1,4 @@
-"""MasterDB2 translation helper: find untranslated items and apply translations.
+"""MasterDB2 translation helper: find untranslated items and validate translations.
 
 Usage:
     # Find untranslated items
@@ -10,6 +10,9 @@ Usage:
     # Apply translations from JSON file
     python -m scripts.masterdb2_translate apply translations.json
 
+    # Apply an explicitly approved stable-identity draft
+    python -m scripts.masterdb2_translate apply-records approved-draft.json
+
     # Show character tone samples for translation reference
     python -m scripts.masterdb2_translate tone [char_code]
 
@@ -19,18 +22,57 @@ Usage:
 
 JSON format for apply:
     {"FileName": {"原文テキスト": "번역 텍스트", ...}, ...}
+
+``apply`` is retained only so older automation fails with an explicit
+deprecation error.  It is unsafe for production because the same Japanese
+fragment can require a different Korean translation per record/primary key.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import sys
+import tempfile
 
 import openpyxl
 import pandas as pd
 
 from . import paths as _paths
+
+
+def _cell_text(value) -> str:
+    """Canonicalize Excel scalar values consistently across pandas/openpyxl."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _record_identity(sheet: str, headers: list, values: dict) -> dict:
+    keys = {
+        str(column): _cell_text(values.get(column))
+        for column in headers
+        if str(column).startswith(("KEY ID", "KEY VALUE"))
+    }
+    return {
+        "sheet": sheet,
+        "keys": keys,
+        "field_id": _cell_text(values.get("ID")),
+        "source": _cell_text(values.get("원문")),
+    }
+
+
+def _identity_key(identity: dict) -> str:
+    payload = json.dumps(
+        identity,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _read_xlsx(file_path: str) -> pd.DataFrame:
@@ -71,15 +113,23 @@ def scan_untranslated(export_path: str | None = None) -> dict[str, list[dict]]:
                 continue
 
             items = []
-            for _, row in rows.iterrows():
+            headers = list(df.columns)
+            for index, row in rows.iterrows():
                 keys = "|".join(
-                    str(row[c]) for c in df.columns if c.startswith("KEY VALUE")
+                    _cell_text(row[c])
+                    for c in df.columns
+                    if str(c).startswith("KEY VALUE")
                 )
+                values = {column: row[column] for column in headers}
+                identity = _record_identity(name, headers, values)
                 items.append(
                     {
                         "keys": keys,
-                        "id": str(row.get("ID", "")),
-                        "text": str(row["원문"]),
+                        "id": _cell_text(row.get("ID", "")),
+                        "text": _cell_text(row["원문"]),
+                        "identity": identity,
+                        "identity_key": _identity_key(identity),
+                        "row_hint": int(index) + 2,
                     }
                 )
             result[name] = items
@@ -149,6 +199,144 @@ def apply_translations(trans_path: str) -> None:
             print(f"  SKIP: {file_name} - no matches")
 
     print(f"\n총 {total_applied}개 번역 적용")
+
+
+def _atomic_save_workbook(wb, path: str) -> None:
+    """Save an xlsx beside its target, fsync it, then atomically replace."""
+    directory = os.path.dirname(path)
+    fd, temp_path = tempfile.mkstemp(
+        prefix=f".{os.path.basename(path)}.", suffix=".tmp.xlsx", dir=directory
+    )
+    os.close(fd)
+    try:
+        wb.save(temp_path)
+        os.chmod(temp_path, os.stat(path).st_mode)
+        with open(temp_path, "rb") as fp:
+            os.fsync(fp.fileno())
+        os.replace(temp_path, path)
+        dir_fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+
+def apply_record_translations(
+    trans_path: str,
+    *,
+    drive_path: str | None = None,
+) -> dict:
+    """Apply an approved stable-identity draft, atomically per xlsx file.
+
+    Input keeps the scan export shape and adds ``translation`` to every item:
+    ``{sheet: [{identity, identity_key, translation, ...}, ...]}``.
+    Every item in a sheet is validated before that sheet is saved. A failed
+    sheet does not prevent independent valid sheets from being applied.
+    """
+    with open(trans_path, encoding="utf-8") as fp:
+        data = json.load(fp)
+    if not isinstance(data, dict):
+        raise ValueError("approved draft must be an object keyed by sheet name")
+
+    drive_path = drive_path or _paths.MASTERDB2_DRIVE_PATH
+    report: dict = {
+        "applied_files": {},
+        "failed_files": {},
+        "applied_total": 0,
+    }
+
+    for sheet, items in data.items():
+        errors: list[str] = []
+        if (
+            not isinstance(sheet, str)
+            or not sheet
+            or os.path.basename(sheet) != sheet
+            or any(sep in sheet for sep in ("/", "\\"))
+        ):
+            report["failed_files"][str(sheet)] = ["invalid sheet name"]
+            continue
+        if not isinstance(items, list) or not items:
+            report["failed_files"][sheet] = ["translation item list is empty"]
+            continue
+
+        xlsx_path = os.path.join(drive_path, f"{sheet}.xlsx")
+        if not os.path.isfile(xlsx_path):
+            report["failed_files"][sheet] = [f"xlsx not found: {xlsx_path}"]
+            continue
+
+        wb = openpyxl.load_workbook(xlsx_path)
+        ws = wb.active
+        headers = [cell.value for cell in ws[1]]
+        if "원문" not in headers or "번역" not in headers:
+            wb.close()
+            report["failed_files"][sheet] = ["missing 원문/번역 columns"]
+            continue
+        trans_col = headers.index("번역") + 1
+
+        rows_by_key: dict[str, list[int]] = {}
+        for row_number in range(2, ws.max_row + 1):
+            values = {
+                header: ws.cell(row=row_number, column=column).value
+                for column, header in enumerate(headers, 1)
+            }
+            identity = _record_identity(sheet, headers, values)
+            rows_by_key.setdefault(_identity_key(identity), []).append(row_number)
+
+        planned: list[tuple[int, str]] = []
+        requested_keys: set[str] = set()
+        for index, item in enumerate(items, 1):
+            label = f"item {index}"
+            if not isinstance(item, dict):
+                errors.append(f"{label}: expected object")
+                continue
+            identity = item.get("identity")
+            supplied_key = item.get("identity_key")
+            translation = item.get("translation")
+            if not isinstance(identity, dict):
+                errors.append(f"{label}: missing identity")
+                continue
+            expected_key = _identity_key(identity)
+            if supplied_key != expected_key:
+                errors.append(f"{label}: identity_key mismatch")
+                continue
+            if expected_key in requested_keys:
+                errors.append(f"{label}: duplicate identity in approved draft")
+                continue
+            requested_keys.add(expected_key)
+            if not isinstance(translation, str) or translation == "":
+                errors.append(f"{label}: translation must be a non-empty string")
+                continue
+            matches = rows_by_key.get(expected_key, [])
+            if len(matches) != 1:
+                errors.append(
+                    f"{label}: identity matched {len(matches)} rows (expected exactly 1)"
+                )
+                continue
+            row_number = matches[0]
+            current = ws.cell(row=row_number, column=trans_col).value
+            if current not in (None, ""):
+                errors.append(
+                    f"{label}: target row already has a translation; refusing overwrite"
+                )
+                continue
+            planned.append((row_number, translation))
+
+        if errors:
+            wb.close()
+            report["failed_files"][sheet] = errors
+            continue
+
+        for row_number, translation in planned:
+            ws.cell(row=row_number, column=trans_col).value = translation
+        _atomic_save_workbook(wb, xlsx_path)
+        wb.close()
+        report["applied_files"][sheet] = len(planned)
+        report["applied_total"] += len(planned)
+
+    return report
 
 
 def show_tone(char_code: str | None = None) -> None:
@@ -256,15 +444,17 @@ def _collect_descs_concat(record: dict) -> str:
     return "".join(chunks)
 
 
-def concat_check(target_file: str | None = None) -> int:
+def concat_check(
+    target_file: str | None = None,
+    *,
+    output_json_dir: str = "output/local-files/masterTrans",
+    jp_source_dir: str = "res/masterdb/gakumasu-diff/json",
+) -> int:
     """Scan output JSON for fragment concat naturalness issues.
 
     Classifies doublespace into JP-faithful (preserved from JP source) vs
     KR-introduced (translation bug). Returns total KR-introduced issue count.
     """
-    output_json_dir = "output/local-files/masterTrans"
-    jp_source_dir = "res/masterdb/gakumasu-diff/json"
-
     if not os.path.isdir(output_json_dir):
         print(f"❌ output JSON not found: {output_json_dir}", file=sys.stderr)
         return -1
@@ -272,6 +462,8 @@ def concat_check(target_file: str | None = None) -> int:
     total_kr_introduced = 0
     total_jp_faithful = 0
     per_file: dict[str, dict[str, int]] = {}
+    checked_files = 0
+    validation_errors: list[str] = []
 
     for fn in sorted(os.listdir(output_json_dir)):
         if not fn.endswith(".json"):
@@ -283,8 +475,13 @@ def concat_check(target_file: str | None = None) -> int:
         try:
             with open(fp, encoding="utf-8") as f:
                 data = json.load(f)
-        except Exception:
+        except Exception as exc:
+            validation_errors.append(f"{fn}: output JSON parse failed ({exc})")
             continue
+        if not isinstance(data, dict) or not isinstance(data.get("data", []), list):
+            validation_errors.append(f"{fn}: output JSON must contain a data list")
+            continue
+        checked_files += 1
 
         # JP source for doublespace classification
         jp_map: dict[str, dict] = {}
@@ -343,6 +540,21 @@ def concat_check(target_file: str | None = None) -> int:
         if sum(file_issues.values()) > 0:
             per_file[fname] = file_issues
 
+    if target_file and checked_files == 0 and not validation_errors:
+        validation_errors.append(
+            f"requested output JSON not found: {target_file}.json"
+        )
+    elif not target_file and checked_files == 0 and not validation_errors:
+        validation_errors.append(
+            f"no readable output JSON files found in {output_json_dir}"
+        )
+
+    if validation_errors:
+        print("❌ concat-check validation failed:", file=sys.stderr)
+        for error in validation_errors:
+            print(f"  - {error}", file=sys.stderr)
+        return -1
+
     if not per_file:
         print("✅ 검증 통과: KR-introduced concat 자연스러움 issue 없음.")
         if total_jp_faithful:
@@ -358,6 +570,15 @@ def concat_check(target_file: str | None = None) -> int:
     return total_kr_introduced
 
 
+def _concat_exit_status(code: int) -> int:
+    """Map concat-check result to a fail-closed process exit status."""
+    if code < 0:
+        return 2
+    if code > 0:
+        return 1
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="MasterDB2 translation helper")
     sub = parser.add_subparsers(dest="command")
@@ -367,6 +588,14 @@ def main() -> None:
 
     apply_p = sub.add_parser("apply", help="Apply translations from JSON")
     apply_p.add_argument("file", help="JSON file with translations")
+
+    apply_records_p = sub.add_parser(
+        "apply-records",
+        help="Apply a user-approved stable-identity translation draft",
+    )
+    apply_records_p.add_argument(
+        "file", help="Approved stable-identity JSON draft"
+    )
 
     tone_p = sub.add_parser("tone", help="Show character tone samples")
     tone_p.add_argument("char", nargs="?", help="Character code (e.g. amao)")
@@ -382,12 +611,23 @@ def main() -> None:
     if args.command == "scan":
         scan_untranslated(args.export)
     elif args.command == "apply":
-        apply_translations(args.file)
+        print(
+            "ERROR: 'apply' is disabled. Its source-text-only mapping cannot "
+            "represent record-specific MasterDB2 fragment translations. "
+            "Use the Hermes MasterDB2 handoff with primary-key/field-path "
+            "identity instead.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    elif args.command == "apply-records":
+        report = apply_record_translations(args.file)
+        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+        sys.exit(1 if report["failed_files"] else 0)
     elif args.command == "tone":
         show_tone(args.char)
     elif args.command == "concat-check":
         code = concat_check(args.file)
-        sys.exit(1 if code > 0 else 0)
+        sys.exit(_concat_exit_status(code))
     else:
         parser.print_help()
 

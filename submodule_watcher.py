@@ -138,21 +138,33 @@ def _is_running() -> bool:
         return False
 
 
-def _trigger_run(changed: list[str]) -> None:
+def _trigger_run(changed: list[str]) -> bool:
+    """Run run.sh and acknowledge only a successful completion."""
     if _is_running():
-        log.info(f"Skipped: already running. Changed: {changed}")
-        return
+        log.info(
+            f"Deferred: run.sh already running. Changed: {changed}; "
+            "watcher state is not advanced so the next poll retries"
+        )
+        return False
 
     log.info(f"Triggering run.sh — changed signals: {changed}")
     logfile = WORKDIR / f"output_watcher_{datetime.datetime.now():%Y%m%d_%H%M}.log"
-    subprocess.Popen(
-        ["bash", "run.sh"],
-        cwd=str(WORKDIR),
-        stdout=open(logfile, "w"),
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    log.info(f"run.sh started, log={logfile.name}")
+    with logfile.open("w") as output:
+        proc = subprocess.run(
+            ["bash", "run.sh"],
+            cwd=str(WORKDIR),
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+    if proc.returncode != 0:
+        log.error(
+            f"run.sh failed exit={proc.returncode}; campus state remains pending, "
+            f"log={logfile.name}"
+        )
+        return False
+    log.info(f"run.sh completed successfully, log={logfile.name}")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -169,16 +181,19 @@ def check_and_trigger() -> None:
         return
 
     changed = [k for k in current if saved.get(k) != current[k]]
-    _save_state(current)
 
     if not saved:
+        _save_state(current)
         log.info(f"First run — saved initial state: {current}")
         return
 
     if changed:
         for k in changed:
             log.info(f"  {k}: {saved.get(k)} → {current[k]}")
-        _trigger_run(changed)
+        if _trigger_run(changed):
+            _save_state(current)
+        else:
+            log.info("Change remains pending and will be retried on the next poll")
     else:
         log.debug(f"No changes (state: {current})")
 

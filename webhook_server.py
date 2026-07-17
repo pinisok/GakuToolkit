@@ -3,10 +3,11 @@
 Two trigger sources, one coalescing queue:
 
   POST /webhook           — GitHub push events (submodule repos)
-  POST /internal/trigger  — Bearer-authenticated trigger from agents /
-                            scripts (e.g. nanoclaw agent after Drive upload)
+  POST /internal/trigger  — Bearer-authenticated trigger from Hermes profiles /
+                            scripts after a verified Drive upload
 
-Both write into the same in-process pending flag and return 202 immediately.
+Both write into the same durable pending queue and return 202 only after the
+queue file has been atomically persisted.
 A single background worker drains the queue: while pending, take the
 cross-process flock (`/tmp/gakutoolkit.lock`) and run `run.sh`. Multiple
 triggers during a run collapse into one extra run. The flock is shared with
@@ -32,11 +33,13 @@ import datetime
 import fcntl
 import hashlib
 import hmac
+import json
 import logging
 import os
 import secrets
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -64,6 +67,9 @@ ENABLE_GITHUB_MIRROR_WEBHOOK = os.environ.get(
 WORKDIR = Path(__file__).resolve().parent
 LOCKFILE = Path("/tmp/gakutoolkit.lock")
 LOGFILE = WORKDIR / "webhook.log"
+QUEUE_FILE = Path(os.environ.get(
+    "WEBHOOK_QUEUE_FILE", str(WORKDIR / ".webhook_queue.json")
+))
 
 WATCHED_REPOS = {
     "DreamGallery/Campus-adv-txts",
@@ -95,14 +101,16 @@ log = logging.getLogger("webhook")
 #   * Cross-process `flock` on LOCKFILE — serializes against the cron-driven
 #     run.sh. Worker waits (not non-blocking) so triggers never get dropped.
 #
-# `_pending` is the single bit of state: "there is work to do." Triggers set
-# it; the worker reads-and-clears it each iteration. If a trigger arrives
-# during a run, _pending is set again → worker loops once more.
+# `_pending` and `_inflight` are persisted atomically. On service restart an
+# in-flight batch is moved back to pending; the shared flock prevents overlap
+# with a surviving run.sh process, so replay is safe and idempotent.
 #
 # `_last_triggers` keeps a short tail of recent trigger reasons for the
 # /status endpoint — debugging aid only.
 
 _pending: list[dict] = []        # queue of trigger entries awaiting a drain
+_inflight: list[dict] = []       # current batch; recovered to pending on restart
+_dead_letter: list[dict] = []    # bounded durable record of attempted failures
 _pending_lock = threading.Lock()
 _worker_lock = threading.Lock()
 _run_state = {
@@ -116,6 +124,88 @@ _run_state = {
 _run_state_lock = threading.Lock()
 _last_triggers: list[dict] = []
 _LAST_TRIGGERS_MAX = 20
+_DEAD_LETTER_MAX = 100
+
+
+def _fsync_parent(path: Path) -> None:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    fd = os.open(str(path.parent), flags)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _persist_queue_locked() -> None:
+    """Persist queue state atomically. Caller must hold `_pending_lock`."""
+    QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{QUEUE_FILE.name}.", dir=str(QUEUE_FILE.parent)
+    )
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(
+                {
+                    "pending": _pending,
+                    "inflight": _inflight,
+                    "dead_letter": _dead_letter[-_DEAD_LETTER_MAX:],
+                },
+                fh,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_name, QUEUE_FILE)
+        _fsync_parent(QUEUE_FILE)
+    finally:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+
+
+def _restore_queue_state() -> int:
+    """Load durable state and recover an interrupted batch to pending."""
+    if not QUEUE_FILE.exists():
+        return 0
+    data = json.loads(QUEUE_FILE.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"invalid webhook queue state: {QUEUE_FILE}")
+
+    with _pending_lock:
+        pending = list(data.get("pending") or [])
+        recovered = list(data.get("inflight") or [])
+        dead = list(data.get("dead_letter") or [])[-_DEAD_LETTER_MAX:]
+
+        # Deduplicate by trigger id while placing interrupted work first.
+        seen: set[str] = set()
+        restored: list[dict] = []
+        for entry in recovered + pending:
+            tid = str(entry.get("tid", ""))
+            if tid and tid in seen:
+                continue
+            if tid:
+                seen.add(tid)
+            restored.append(entry)
+        _pending[:] = restored
+        _inflight.clear()
+        _dead_letter[:] = dead
+        _last_triggers[:] = (restored + dead)[-_LAST_TRIGGERS_MAX:]
+        if recovered:
+            _persist_queue_locked()
+
+    if recovered:
+        log.warning(
+            "recovered %d in-flight webhook trigger(s) after restart",
+            len(recovered),
+        )
+    return len(_pending)
 
 
 def _new_trigger_id() -> str:
@@ -137,6 +227,8 @@ def _enqueue_trigger(reason: dict) -> str:
         _pending.append(entry)
         _last_triggers.append(entry)
         del _last_triggers[:-_LAST_TRIGGERS_MAX]
+        # HTTP 202 is returned only after this fsync+replace succeeds.
+        _persist_queue_locked()
     log.info(f"[tid={tid}] enqueued: {reason}")
     threading.Thread(target=_drain, daemon=True, name="trigger-drain").start()
     return tid
@@ -161,13 +253,38 @@ def _drain() -> None:
                             _run_state["runs_coalesced"] += rounds - 1
                         log.info(f"drain: completed {rounds} rounds (coalesced extras)")
                     return
-                # Drain everything currently pending into a single run.
+                # Move everything currently pending into a durable in-flight
+                # batch. A crash from here through subprocess completion is
+                # recovered on service startup.
                 batch = list(_pending)
                 _pending.clear()
+                _inflight[:] = batch
+                _persist_queue_locked()
             tids = [e["tid"] for e in batch]
             retry_attempt = max(int(e.get("retry_attempt", 0) or 0) for e in batch)
             log.info(f"drain: starting round={rounds + 1} batch_size={len(batch)} tids={tids}")
-            _run_pipeline(tids, retry_attempt=retry_attempt)
+            outcome = _run_pipeline(tids, retry_attempt=retry_attempt)
+
+            with _pending_lock:
+                _inflight.clear()
+                if outcome == "deferred":
+                    for entry in batch:
+                        entry["retry_attempt"] = retry_attempt + 1
+                    _pending[0:0] = batch
+                elif outcome in {"failed", "exhausted"}:
+                    failed_at = datetime.datetime.now().isoformat(timespec="seconds")
+                    _dead_letter.extend(
+                        {**entry, "failed_at": failed_at, "outcome": outcome}
+                        for entry in batch
+                    )
+                    del _dead_letter[:-_DEAD_LETTER_MAX]
+                _persist_queue_locked()
+
+            if outcome == "deferred":
+                timer = threading.Timer(TRIGGER_RETRY_DELAY, _drain)
+                timer.daemon = True
+                timer.start()
+                return
             rounds += 1
     finally:
         _worker_lock.release()
@@ -212,47 +329,7 @@ def _tail_file(path: Path, lines: int = 20) -> str:
         return f"<could not read {path.name}: {e}>"
 
 
-def _schedule_pipeline_retry(trigger_ids: list[str], detail: str, retry_attempt: int = 0) -> str | None:
-    """Re-enqueue a lock-blocked trigger after a short delay.
-
-    This turns transient duplicate execution / flock contention into a delayed
-    retry instead of a dropped failure. The retry is intentionally a fresh
-    internal trigger because run.sh is idempotent and will resync current state.
-    """
-    if retry_attempt >= TRIGGER_RETRY_MAX_ATTEMPTS:
-        log.error(
-            "retry exhausted after %s attempt(s) for tids=%s: %s",
-            retry_attempt,
-            trigger_ids,
-            detail,
-        )
-        return None
-
-    next_attempt = retry_attempt + 1
-    retry_at = datetime.datetime.now() + datetime.timedelta(seconds=TRIGGER_RETRY_DELAY)
-
-    def _enqueue_retry() -> None:
-        tid = _enqueue_trigger({
-            "source": "webhook-retry",
-            "reason": f"retry after lock timeout: {detail}",
-            "retry_of": list(trigger_ids),
-            "retry_attempt": next_attempt,
-        })
-        log.info(
-            "scheduled retry fired — original_tids=%s retry_tid=%s attempt=%s/%s",
-            trigger_ids,
-            tid,
-            next_attempt,
-            TRIGGER_RETRY_MAX_ATTEMPTS,
-        )
-
-    timer = threading.Timer(TRIGGER_RETRY_DELAY, _enqueue_retry)
-    timer.daemon = True
-    timer.start()
-    return retry_at.isoformat(timespec="seconds")
-
-
-def _run_pipeline(trigger_ids: list[str], retry_attempt: int = 0) -> None:
+def _run_pipeline(trigger_ids: list[str], retry_attempt: int = 0) -> str:
     """Invoke run.sh under the cross-process flock. Blocks up to
     TRIGGER_FLOCK_TIMEOUT for the cron-side runner to release.
 
@@ -283,8 +360,12 @@ def _run_pipeline(trigger_ids: list[str], retry_attempt: int = 0) -> None:
             f"timed out waiting {TRIGGER_FLOCK_TIMEOUT}s for {LOCKFILE}. "
             "Another run is still active; scheduling a retry instead of dropping the trigger."
         )
-        retry_at = _schedule_pipeline_retry(trigger_ids, detail, retry_attempt=retry_attempt)
-        if retry_at is None:
+        exhausted = retry_attempt >= TRIGGER_RETRY_MAX_ATTEMPTS
+        retry_at = None if exhausted else (
+            datetime.datetime.now()
+            + datetime.timedelta(seconds=TRIGGER_RETRY_DELAY)
+        ).isoformat(timespec="seconds")
+        if exhausted:
             log.error(f"[{tag}] _run_pipeline retry exhausted — {detail}")
         else:
             log.warning(f"[{tag}] _run_pipeline deferred — {detail} retry_at={retry_at}")
@@ -298,11 +379,11 @@ def _run_pipeline(trigger_ids: list[str], retry_attempt: int = 0) -> None:
                 "last_retry_detail": detail,
             })
             _run_state["runs_deferred"] += 1
-            if retry_at is None:
+            if exhausted:
                 _run_state["runs_failed"] += 1
                 _run_state["last_failure_at"] = finished_at.isoformat(timespec="seconds")
                 _run_state["last_failure_detail"] = detail
-        return
+        return "exhausted" if exhausted else "deferred"
 
     proc = None
     exception_detail = None
@@ -362,6 +443,7 @@ def _run_pipeline(trigger_ids: list[str], retry_attempt: int = 0) -> None:
         f"duration={duration:.1f}s log={logfile.name}"
         + (" (FAILED — see /status for detail)" if failed else "")
     )
+    return "failed" if failed else "succeeded"
 
 
 # ---------------------------------------------------------------------------
@@ -441,8 +523,8 @@ def github_webhook():
 
 @app.route("/internal/trigger", methods=["POST"])
 def internal_trigger():
-    """Trigger a run.sh execution from a trusted internal caller (e.g.
-    nanoclaw agent after Drive upload). Request is always queued — never
+    """Trigger a run.sh execution from a trusted internal Hermes caller after
+    a verified Drive upload. Request is always queued — never
     rejected with a conflict — so concurrent cron runs do not cause loss.
 
     Body (optional JSON): { "reason": "...", "pipeline": "...", "files": [...] }
@@ -476,12 +558,17 @@ def status():
     with _pending_lock:
         pending_count = len(_pending)
         pending_tids = [e.get("tid") for e in _pending]
+        inflight_tids = [e.get("tid") for e in _inflight]
+        dead_letter_count = len(_dead_letter)
         recent = list(_last_triggers)
     with _run_state_lock:
         run_state = dict(_run_state)
     return jsonify({
         "pending_count": pending_count,
         "pending_tids": pending_tids,
+        "inflight_tids": inflight_tids,
+        "dead_letter_count": dead_letter_count,
+        "queue_file": QUEUE_FILE.name,
         "run_state": run_state,
         "recent_triggers": recent[-10:],
         "lock_exists": LOCKFILE.exists(),
@@ -533,6 +620,7 @@ def health():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    restored_pending = _restore_queue_state()
     log.info(f"Starting webhook server on port {PORT}")
     log.info(
         "GitHub mirror webhook: %s%s",
@@ -545,4 +633,7 @@ if __name__ == "__main__":
         f"flock timeout: {TRIGGER_FLOCK_TIMEOUT}s; retry delay: {TRIGGER_RETRY_DELAY}s; "
         f"retry max attempts: {TRIGGER_RETRY_MAX_ATTEMPTS}"
     )
+    if restored_pending:
+        log.warning("starting drain for %d restored trigger(s)", restored_pending)
+        threading.Thread(target=_drain, daemon=True, name="startup-drain").start()
     app.run(host="0.0.0.0", port=PORT, debug=False)

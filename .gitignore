@@ -35,3 +35,4 @@ namuwiki_card_item_names.txt
 translations_review.md
 .shared.lock
 .webhook-token
+.webhook_queue.json
