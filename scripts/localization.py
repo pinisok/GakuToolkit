@@ -37,10 +37,11 @@ def XlsxToJson(input_path, output_path):
     Rows are skipped when:
       - ID cell isn't a non-empty string
       - 번역 cell is empty
+      - JP source contains no Japanese (runtime/format-only entry)
       - 번역 carries the OBSOLETE marker via JP column (entry retired)
     """
     import openpyxl
-    from .localization_release import OBSOLETE_MARKER
+    from .localization_release import OBSOLETE_MARKER, contains_japanese_text
 
     wb = openpyxl.load_workbook(input_path, read_only=True, data_only=True)
     try:
@@ -64,7 +65,7 @@ def XlsxToJson(input_path, output_path):
         )
 
         data = {}
-        skipped_no_id = skipped_no_trans = skipped_obsolete = 0
+        skipped_no_id = skipped_no_trans = skipped_no_japanese = skipped_obsolete = 0
         for row in ws.iter_rows(min_row=2, values_only=True):
             if id_col >= len(row) or kr_col >= len(row):
                 continue
@@ -80,6 +81,9 @@ def XlsxToJson(input_path, output_path):
             if isinstance(jp_val, str) and jp_val.startswith(OBSOLETE_MARKER):
                 skipped_obsolete += 1
                 continue
+            if not contains_japanese_text(jp_val):
+                skipped_no_japanese += 1
+                continue
             if trans.startswith("'"):
                 data[key] = Deserialize(trans[1:])
             else:
@@ -89,7 +93,7 @@ def XlsxToJson(input_path, output_path):
 
     LOG_INFO(3, f"localization → JSON: wrote {len(data)} keys "
                 f"(skipped: no-id={skipped_no_id}, no-trans={skipped_no_trans}, "
-                f"obsolete={skipped_obsolete})")
+                f"no-japanese={skipped_no_japanese}, obsolete={skipped_obsolete})")
 
     os.makedirs(os.path.split(output_path)[0], exist_ok=True)
     with open(output_path, 'w', encoding='utf-8') as f:

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.request
 import urllib.error
 from dataclasses import dataclass, field
@@ -43,6 +44,13 @@ JP_COL_HEADER = 0          # openpyxl reads the unnamed first header as int 0
 KR_COL_HEADER = "번역"
 ID_COL_HEADER = "ID"
 OBSOLETE_MARKER = "[OBSOLETE]"
+
+# A localization entry is a translation target only when its source contains
+# Japanese writing.  Include kanji because many UI strings are kanji-only
+# (for example, 確認) and therefore have no hiragana or katakana.
+_JAPANESE_TEXT_RE = re.compile(
+    r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]"
+)
 
 HTTP_TIMEOUT_SECONDS = 30
 USER_AGENT = "GakuToolkit-localization-sync/1.0"
@@ -77,6 +85,11 @@ class LocalizationDiff:
     @property
     def total(self) -> int:
         return len(self.added) + len(self.changed_jp) + len(self.removed)
+
+
+def contains_japanese_text(value: object) -> bool:
+    """Return whether a localization source value is eligible for translation."""
+    return isinstance(value, str) and bool(_JAPANESE_TEXT_RE.search(value))
 
 
 # ============================================================
@@ -247,11 +260,19 @@ def _resolve_columns(headers: list) -> tuple[int, int, int]:
 
 
 def diff_release_against_xlsx(release_data: dict[str, str], xlsx_path: str) -> LocalizationDiff:
-    """Compute additions / JP-changes / removals between release JSON and existing xlsx."""
+    """Compute additions / JP-changes / removals for Japanese source strings only.
+
+    Source values without Japanese are runtime/format-only entries.  They are
+    deliberately not appended to the translation sheet, and existing rows of
+    that kind are ignored rather than being marked obsolete on every release.
+    """
     diff = LocalizationDiff()
+    eligible_release = {
+        key: jp for key, jp in release_data.items() if contains_japanese_text(jp)
+    }
 
     if not os.path.exists(xlsx_path):
-        diff.added = dict(release_data)
+        diff.added = dict(eligible_release)
         return diff
 
     wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
@@ -268,18 +289,19 @@ def diff_release_against_xlsx(release_data: dict[str, str], xlsx_path: str) -> L
             if not isinstance(key, str) or not key:
                 continue
             jp = row[jp_col] if isinstance(row[jp_col], str) else ""
-            existing[key] = jp
+            if contains_japanese_text(jp):
+                existing[key] = jp
     finally:
         wb.close()
 
-    for key, jp in release_data.items():
+    for key, jp in eligible_release.items():
         if key not in existing:
             diff.added[key] = jp
         elif existing[key] != jp:
             diff.changed_jp[key] = (existing[key], jp)
 
     for key in existing:
-        if key not in release_data:
+        if key not in eligible_release:
             diff.removed.append(key)
     diff.removed.sort()
     return diff

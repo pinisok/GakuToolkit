@@ -31,8 +31,8 @@ class TestLocalizationXlsxToJson:
     def test_basic_conversion(self, tmp_path):
         xlsx_path = str(tmp_path / "localization.xlsx")
         create_localization_xlsx(xlsx_path, [
-            {0: "ref1", "ID": "ui.button.ok", "번역": "확인"},
-            {0: "ref2", "ID": "ui.button.cancel", "번역": "취소"},
+            {0: "確認", "ID": "ui.button.ok", "번역": "확인"},
+            {0: "キャンセル", "ID": "ui.button.cancel", "번역": "취소"},
         ])
         output_path = str(tmp_path / "localization.json")
 
@@ -46,7 +46,7 @@ class TestLocalizationXlsxToJson:
     def test_output_keys_are_id_column(self, tmp_path):
         xlsx_path = str(tmp_path / "localization.xlsx")
         create_localization_xlsx(xlsx_path, [
-            {0: "original_ref", "ID": "my.key", "번역": "값"},
+            {0: "元の文言", "ID": "my.key", "번역": "값"},
         ])
         output_path = str(tmp_path / "localization.json")
 
@@ -55,12 +55,12 @@ class TestLocalizationXlsxToJson:
         with open(output_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         assert "my.key" in data
-        assert "original_ref" not in data
+        assert "元の文言" not in data
 
     def test_leading_apostrophe_stripped(self, tmp_path):
         xlsx_path = str(tmp_path / "localization.xlsx")
         create_localization_xlsx(xlsx_path, [
-            {0: "ref", "ID": "key", "번역": "\'quoted"},
+            {0: "引用", "ID": "key", "번역": "\'quoted"},
         ])
         output_path = str(tmp_path / "localization.json")
 
@@ -73,7 +73,7 @@ class TestLocalizationXlsxToJson:
     def test_deserialize_applied(self, tmp_path):
         xlsx_path = str(tmp_path / "localization.xlsx")
         create_localization_xlsx(xlsx_path, [
-            {0: "ref", "ID": "key", "번역": "line1\\tline2"},
+            {0: "テスト", "ID": "key", "번역": "line1\\tline2"},
         ])
         output_path = str(tmp_path / "localization.json")
 
@@ -82,6 +82,20 @@ class TestLocalizationXlsxToJson:
         with open(output_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         assert data["key"] == "line1\tline2"
+
+    def test_skips_entries_without_japanese_source(self, tmp_path):
+        xlsx_path = str(tmp_path / "localization.xlsx")
+        create_localization_xlsx(xlsx_path, [
+            {0: "確認", "ID": "ui.ok", "번역": "확인"},
+            {0: "OK", "ID": "common.ok", "번역": "확인"},
+            {0: "1/2", "ID": "common.fraction", "번역": "1/2"},
+        ])
+        output_path = str(tmp_path / "localization.json")
+
+        LocXlsxToJson(xlsx_path, output_path)
+
+        data = json.loads(open(output_path, encoding="utf-8").read())
+        assert data == {"ui.ok": "확인"}
 
 
 class TestLocalizationUpdate:
@@ -112,8 +126,8 @@ class TestLocalizationNumericTranslation:
     def test_numeric_translation_skipped(self, tmp_path):
         xlsx_path = str(tmp_path / "localization.xlsx")
         create_localization_xlsx(xlsx_path, [
-            {0: "ref1", "ID": "key.valid", "번역": "정상번역"},
-            {0: "ref2", "ID": "key.numeric", "번역": 12345},
+            {0: "確認", "ID": "key.valid", "번역": "정상번역"},
+            {0: "数値", "ID": "key.numeric", "번역": 12345},
         ])
         output_path = str(tmp_path / "localization.json")
 
@@ -242,6 +256,24 @@ class TestDiffReleaseAgainstXlsx:
         diff = diff_release_against_xlsx({"a": "あ", "b": "い"}, missing)
         assert diff.added == {"a": "あ", "b": "い"}
         assert not diff.changed_jp and not diff.removed
+
+    def test_excludes_non_japanese_sources_from_sheet_sync(self, tmp_path):
+        xlsx = str(tmp_path / "loc.xlsx")
+        _release_xlsx(xlsx, [
+            ("確認", "확인", "ui.ok"),
+            ("OK", "확인", "common.ok"),
+        ])
+
+        diff = diff_release_against_xlsx({
+            "ui.ok": "確認",
+            "common.ok": "OK",
+            "common.fraction": "1/2",
+            "ui.new": "新規",
+        }, xlsx)
+
+        assert diff.added == {"ui.new": "新規"}
+        assert diff.changed_jp == {}
+        assert diff.removed == []
 
 
 class TestApplyDiffToXlsx:
@@ -441,4 +473,3 @@ class TestUpdateOriginalToDriveOrchestration:
         rows = _read_rows_by_id(str(xlsx))
         assert rows["ui.k"][0] == "新"
         assert rows["ui.added"][0] == "追加"
-
