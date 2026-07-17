@@ -1,6 +1,12 @@
 """Tests for adv_encode module — text encoding utilities."""
 
-from scripts.adv_encode import _encode, _processEMtag, START_EM_LENGTH, END_EM_LENGTH
+from scripts.adv_encode import (
+    _encode,
+    _normalize_adv_translation_punctuation,
+    _processEMtag,
+    START_EM_LENGTH,
+    END_EM_LENGTH,
+)
 
 
 class TestEncodeConstants:
@@ -30,6 +36,17 @@ class TestEncodeEdgeCases:
 
     def test_only_newlines(self):
         assert _encode("\n\r") == "\\n\\r"
+
+    def test_exact_double_hyphen_is_adv_interruption_dash(self):
+        assert _normalize_adv_translation_punctuation("잠깐--그건") == "잠깐――그건"
+
+    def test_longer_hyphen_run_is_not_rewritten_as_dialogue_dash(self):
+        assert _normalize_adv_translation_punctuation("https://example.invalid/a---b") == "https://example.invalid/a---b"
+
+    def test_url_tag_and_placeholder_are_not_rewritten(self):
+        source = 'https://example.invalid/a--b <em\\=a--b>{key--x} 그리고--멈춰'
+        expected = 'https://example.invalid/a--b <em\\=a--b>{key--x} 그리고――멈춰'
+        assert _normalize_adv_translation_punctuation(source) == expected
 
 
 class TestProcessEMtagEdgeCases:

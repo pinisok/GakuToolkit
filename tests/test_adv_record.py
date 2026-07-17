@@ -77,6 +77,15 @@ class TestXlsxRecordsProcessEdgeCases:
         result = _internalXlsxRecordsProcess(records)
         assert result[0]["translated text"] == "42"
 
+    def test_adv_dash_normalization_is_translation_only(self):
+        records = [
+            {"id": "1", "name": "t", "translated name": "",
+             "text": "source--must-match", "translated text": "잠깐--그건"}
+        ]
+        result = _internalXlsxRecordsProcess(records)
+        assert result[0]["text"] == "source--must-match"
+        assert result[0]["translated text"] == "잠깐――그건"
+
 
 class TestCsvWriter:
     def test_writes_header_and_rows(self):

@@ -3,6 +3,7 @@
 Pure functions for encoding text fields before CSV export:
 - Escape sequences (newline, carriage return, tilde)
 - Dot normalization (... → …, .... → ……)
+- Translation-only ADV interruption-dash normalization (-- → ――)
 - <em> tag word splitting
 """
 
@@ -11,15 +12,39 @@ import re
 from .helper import REGEX_DOTS_4_TO_6, REGEX_DOTS_3
 
 
+_ADV_PROTECTED_TOKEN = re.compile(
+    r"https?://[^\s<>\"']+|<[^>]*>|\{[^{}]*\}"
+)
+_ADV_DOUBLE_HYPHEN = re.compile(r"(?<!-)--(?!-)")
+
+
 def _encode(string: str) -> str:
     """Encode a text string for CSV export.
 
-    Escapes newlines/CR, converts ~ to fullwidth, normalizes dots to ellipsis.
+    Escapes newlines/CR, converts ~ to fullwidth, and normalizes dots to
+    ellipsis.  This function is also used for source text, so translation-only
+    typography belongs in ``_normalize_adv_translation_punctuation`` below.
     """
     string = string.replace("\n", "\\n").replace("\r", "\\r").replace("~", "～")
     string = REGEX_DOTS_4_TO_6.sub('……', string)
     string = REGEX_DOTS_3.sub('…', string)
     return string
+
+
+def _normalize_adv_translation_punctuation(string: str) -> str:
+    """Apply Korean ADV-only typography without mutating JP source text.
+
+    A bare ASCII ``--`` is the authoring shorthand for an interruption dash.
+    Longer hyphen runs plus URLs, tags, and placeholders are left unchanged.
+    """
+    normalized: list[str] = []
+    cursor = 0
+    for protected in _ADV_PROTECTED_TOKEN.finditer(string):
+        normalized.append(_ADV_DOUBLE_HYPHEN.sub("――", string[cursor:protected.start()]))
+        normalized.append(protected.group(0))
+        cursor = protected.end()
+    normalized.append(_ADV_DOUBLE_HYPHEN.sub("――", string[cursor:]))
+    return "".join(normalized)
 
 
 START_EM_LENGTH = len("<em>")

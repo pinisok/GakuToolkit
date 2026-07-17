@@ -10,7 +10,7 @@ import pandas as pd
 
 from .helper import CHARACTER_REGEX_TRANS_MAP
 from .log import LOG_DEBUG
-from .adv_encode import _encode, _processEMtag
+from .adv_encode import _encode, _normalize_adv_translation_punctuation, _processEMtag
 
 
 def _internalOverrideXlsxColumn(dataframe: pd.DataFrame) -> None:
@@ -81,7 +81,9 @@ def _internalXlsxRecordsProcess(records: list[dict]) -> list[dict]:
                 r["translated text"] = ""
 
         r["text"] = _encode(r["text"])
-        r["translated text"] = _encode(r["translated text"])
+        r["translated text"] = _normalize_adv_translation_punctuation(
+            _encode(r["translated text"])
+        )
         r["translated text"] = _processEMtag(r["translated text"])
         if len(r["translated text"]) < 1 and r["id"] != "译者" and r["id"] != "info":
             raise Exception(
