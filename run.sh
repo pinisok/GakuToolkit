@@ -35,8 +35,8 @@ notify_failure() {
     FAILURE_NOTIFIED=1
 
     set +e
-    latest_log=$( { ls -t output_*.log logs/*.log 2>/dev/null || true; } | head -1 )
-    bash ./scripts/notify_run_failure.sh "$component" "$exit_code" "$detail" "$latest_log"
+    latest_log=$( { ls -t "$SCRIPT_DIR"/output_*.log "$SCRIPT_DIR"/logs/*.log 2>/dev/null || true; } | head -1 )
+    bash "$SCRIPT_DIR/scripts/notify_run_failure.sh" "$component" "$exit_code" "$detail" "$latest_log"
     local notify_rc=$?
     set -e
     if [ "$notify_rc" -ne 0 ]; then
@@ -180,17 +180,19 @@ run_campus_sync_or_retry adv
 # run.sh 내부 campus_sync 호출은 GAKUTOOLKIT_SUPPRESS_POST_SYNC_TRIGGER=1 로
 # webhook self-trigger를 막고, 실제 처리는 현재 run.sh 한 번에서 끝낸다.
 
-# output 서브모듈은 여전히 git (push 대상이므로 git 워크플로우 유지)
-# CRITICAL: `git submodule update --remote` 가 기본적으로 detached HEAD 로
-# checkout 한다. 그 상태에서 후행 commit + `git push origin main` 을 하면
-# local main ref 가 미변경이라 push 가 사실상 no-op 이 되고, 만들어진
-# commit 은 다음 submodule update 시 잃어버린다.
-# (2026-06-17~06-19 동안 7+ 개 cron commit 이 이 경로로 orphan 되었음.)
-# 그래서 submodule update 후 명시적으로 main branch 로 옮긴 뒤
-# origin/main 에 강제 정렬한다.
-git submodule update --init --remote -- output
-git -C output checkout main 2>/dev/null || git -C output checkout -B main
-git -C output reset --hard origin/main
+# output 서브모듈은 여전히 git (push 대상이므로 git 워크플로우 유지).
+# `.gitmodules`의 SSH URL을 매 실행마다 복원해 독립 HTTPS clone으로 바뀐
+# 작업 복사본도 비대화형 서비스 환경에서 다시 정상 push할 수 있게 한다.
+# 로컬 main이 origin/main보다 앞서 있으면 이전 push 실패 커밋을 먼저
+# 재전송하며, dirty/diverged 상태는 자동 reset하지 않고 fail-closed 한다.
+OUTPUT_ORIGIN_URL=$(git config -f "$SCRIPT_DIR/.gitmodules" --get submodule.output.url)
+if [ -z "$OUTPUT_ORIGIN_URL" ]; then
+    echo "❌ .gitmodules에서 output origin URL을 찾을 수 없음" >&2
+    exit 72
+fi
+git submodule sync -- output
+git submodule update --init -- output
+bash "$SCRIPT_DIR/scripts/prepare_output_repo.sh" "$SCRIPT_DIR/output" "$OUTPUT_ORIGIN_URL"
 
 # masterdb 변환 결과 정리 (campus의 orig 이외 산출물)
 rm -f ./res/masterdb/data/*
