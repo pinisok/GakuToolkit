@@ -20,7 +20,8 @@ def _init_remote_fixture(tmp_path: Path) -> tuple[Path, Path]:
     _git("config", "user.name", "test", cwd=seed)
     _git("config", "user.email", "test@example.invalid", cwd=seed)
     (seed / "payload.txt").write_text("base\n", encoding="utf-8")
-    _git("add", "payload.txt", cwd=seed)
+    (seed / "version.txt").write_text("base-version\n", encoding="utf-8")
+    _git("add", "payload.txt", "version.txt", cwd=seed)
     _git("commit", "-m", "base", cwd=seed)
     _git("remote", "add", "origin", str(remote), cwd=seed)
     _git("push", "-u", "origin", "main", cwd=seed)
@@ -34,6 +35,17 @@ def test_run_sh_failure_notifier_is_root_anchored():
     text = RUN_SH.read_text(encoding="utf-8")
     assert 'bash "$SCRIPT_DIR/scripts/notify_run_failure.sh"' in text
     assert "bash ./scripts/notify_run_failure.sh" not in text
+
+
+def test_run_sh_skips_stale_gitlink_checkout_for_initialized_output():
+    text = RUN_SH.read_text(encoding="utf-8")
+    guard = (
+        'if ! git -C "$SCRIPT_DIR/output" rev-parse '
+        "--is-inside-work-tree >/dev/null 2>&1; then"
+    )
+    assert guard in text
+    assert "git submodule update --init -- output" in text
+    assert text.index(guard) < text.index("git submodule update --init -- output")
 
 
 def test_prepare_output_repo_repairs_origin_and_pushes_local_ahead_commit(tmp_path):
@@ -58,6 +70,25 @@ def test_prepare_output_repo_repairs_origin_and_pushes_local_ahead_commit(tmp_pa
         ["git", "--git-dir", str(remote), "rev-parse", "refs/heads/main"], text=True
     ).strip()
     assert remote_head == local_head
+    assert _git("status", "--porcelain", cwd=output) == ""
+
+
+def test_prepare_output_repo_recovers_version_only_generated_residue(tmp_path):
+    remote, output = _init_remote_fixture(tmp_path)
+    version = output / "version.txt"
+    version.write_text("generated-by-interrupted-run\n", encoding="utf-8")
+
+    result = subprocess.run(
+        ["bash", str(PREPARE), str(output), str(remote)],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "restoring generated version.txt residue" in result.stdout
+    assert version.read_text(encoding="utf-8") == "base-version\n"
     assert _git("status", "--porcelain", cwd=output) == ""
 
 

@@ -11,9 +11,18 @@ if ! git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     exit 72
 fi
 
-# A dirty tree may contain generated output from an interrupted run. Never
-# erase it automatically; preserve it for explicit inspection/recovery.
-if [ -n "$(git -C "$repo_path" status --porcelain)" ]; then
+# version.txt is a generated release marker. An interrupted/no-op conversion can
+# leave only its unstaged worktree copy dirty before run.sh reaches the normal
+# post-conversion cleanup. Recover that one proven-safe residue, while preserving
+# every staged change and every other dirty path for explicit inspection.
+dirty_state=$(git -C "$repo_path" status --porcelain --untracked-files=all)
+if [ "$dirty_state" = " M version.txt" ]; then
+    echo "output repository: restoring generated version.txt residue"
+    git -C "$repo_path" restore --worktree -- version.txt
+    dirty_state=""
+fi
+
+if [ -n "$dirty_state" ]; then
     echo "output repository has uncommitted changes; refusing destructive alignment" >&2
     git -C "$repo_path" status --short >&2
     exit 76

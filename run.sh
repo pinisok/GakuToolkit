@@ -185,13 +185,18 @@ run_campus_sync_or_retry adv
 # 작업 복사본도 비대화형 서비스 환경에서 다시 정상 push할 수 있게 한다.
 # 로컬 main이 origin/main보다 앞서 있으면 이전 push 실패 커밋을 먼저
 # 재전송하며, dirty/diverged 상태는 자동 reset하지 않고 fail-closed 한다.
+# 부모 gitlink는 배포용 output main보다 뒤처질 수 있으므로 이미 초기화된
+# 작업 복사본은 checkout하지 않는다. 새 clone에서만 gitlink로 최초 초기화하고,
+# 실제 main 정렬은 아래 prepare_output_repo.sh가 담당한다.
 OUTPUT_ORIGIN_URL=$(git config -f "$SCRIPT_DIR/.gitmodules" --get submodule.output.url)
 if [ -z "$OUTPUT_ORIGIN_URL" ]; then
     echo "❌ .gitmodules에서 output origin URL을 찾을 수 없음" >&2
     exit 72
 fi
 git submodule sync -- output
-git submodule update --init -- output
+if ! git -C "$SCRIPT_DIR/output" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git submodule update --init -- output
+fi
 bash "$SCRIPT_DIR/scripts/prepare_output_repo.sh" "$SCRIPT_DIR/output" "$OUTPUT_ORIGIN_URL"
 
 # masterdb 변환 결과 정리 (campus의 orig 이외 산출물)
